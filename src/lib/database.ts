@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import type { User } from './types';
+import type { User, ExtractionStatus } from './types';
 
 const DB_FILE_NAME = 'ufcScraper.db';
 const dataDirectory = path.join(process.cwd(), 'data');
@@ -44,6 +44,7 @@ function initializeDB(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       year INTEGER NOT NULL,
       semester INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running', -- 'running', 'completed', 'cancelled', 'failed'
       createdAt TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
@@ -73,6 +74,20 @@ function initializeDB(): Database.Database {
 
   console.log('[DB] Schema initialized.');
 
+  // Migration: Add status column to extractions if it doesn't exist
+  try {
+    const columns = db.pragma('table_info(extractions)') as { name: string }[];
+    const statusColumn = columns.some((col) => col.name === 'status');
+    if (!statusColumn) {
+        console.log('[DB_MIGRATION] Coluna "status" não encontrada na tabela "extractions". Adicionando...');
+        db.prepare("ALTER TABLE extractions ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
+        console.log('[DB_MIGRATION] Coluna "status" adicionada com sucesso.');
+    }
+  } catch(e) {
+    console.error('[DB_MIGRATION_ERROR] Falha ao verificar/adicionar a coluna status:', e);
+  }
+
+
   // Seed default user if no users exist
   const userResult = db.prepare('SELECT count(*) as count FROM users').get() as { count: number } | undefined;
   const userCount = userResult ? userResult.count : 0;
@@ -84,6 +99,16 @@ function initializeDB(): Database.Database {
       .run('Usuário Padrão', 'ntic', 'ntic@quixada.ufc.br', salt, hash);
     console.log('[DB] Default user "ntic" created.');
   }
+  
+  // Reset any 'running' extractions from a previous server crash
+  try {
+    db.prepare("UPDATE extractions SET status = 'failed' WHERE status = 'running'").run();
+    console.log('[DB] Marked previously running extractions as failed.');
+  } catch(e) {
+    // This might fail if the table/column doesn't exist yet on first run, which is fine.
+    console.warn('[DB] Could not reset running extractions, might be the first run.', e);
+  }
+
 
   dbInstance = db;
   return db;
@@ -142,6 +167,14 @@ export function findUserById(id: number): Omit<User, 'salt' | 'hash'> | null {
   const user = stmt.get(id) as any;
   return user || null;
 }
+
+export function getExtractionStatus(id: number): ExtractionStatus {
+    const db = getDB();
+    const stmt = db.prepare('SELECT status FROM extractions WHERE id = ?');
+    const result = stmt.get(id) as { status: ExtractionStatus } | undefined;
+    return result?.status || 'failed'; // Default to failed if not found
+}
+
 
 // Ensure the database is initialized on module load
 initializeDB();

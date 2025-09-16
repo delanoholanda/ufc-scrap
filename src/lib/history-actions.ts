@@ -7,7 +7,7 @@ import { processData } from './processing/process-data';
 export async function fetchExtractions(): Promise<{ success: boolean; data?: Extraction[]; error?: string }> {
   try {
     const db = getDB();
-    const stmt = db.prepare('SELECT id, year, semester, createdAt FROM extractions ORDER BY createdAt DESC');
+    const stmt = db.prepare('SELECT id, year, semester, status, createdAt FROM extractions ORDER BY createdAt DESC');
     const data = stmt.all() as Extraction[];
     return { success: true, data };
   } catch (e) {
@@ -46,7 +46,7 @@ export async function fetchExtractionDetails(id: number): Promise<{
   try {
     const db = getDB();
     
-    const extractionStmt = db.prepare('SELECT id, year, semester, createdAt FROM extractions WHERE id = ?');
+    const extractionStmt = db.prepare('SELECT id, year, semester, status, createdAt FROM extractions WHERE id = ?');
     const extraction = extractionStmt.get(id) as Extraction | undefined;
 
     if (!extraction) {
@@ -68,14 +68,15 @@ export async function fetchExtractionDetails(id: number): Promise<{
 }
 
 export async function reprocessExtraction(id: number): Promise<{ success: boolean; files?: CSVFile[]; error?: string }> {
+    const db = getDB();
     try {
-        const db = getDB();
-        
         console.log(`[REPROCESS] Iniciando reprocessamento para extração ID: ${id}`);
+        // Marcar como 'running' para dar feedback na UI
+        db.prepare("UPDATE extractions SET status = 'running' WHERE id = ?").run(id);
 
         // 1. Obter dados brutos e informações da extração
-        const extractionStmt = db.prepare('SELECT year, semester FROM extractions WHERE id = ?');
-        const extractionInfo = extractionStmt.get(id) as { year: number; semester: number } | undefined;
+        const extractionInfoStmt = db.prepare('SELECT year, semester FROM extractions WHERE id = ?');
+        const extractionInfo = extractionInfoStmt.get(id) as { year: number; semester: number } | undefined;
         
         const dataStmt = db.prepare('SELECT * FROM scraped_data WHERE extraction_id = ?');
         const rawData = dataStmt.all(id) as ScrapedDataRow[];
@@ -83,6 +84,7 @@ export async function reprocessExtraction(id: number): Promise<{ success: boolea
         if (!extractionInfo || rawData.length === 0) {
             const errorMsg = 'Dados brutos ou informações da extração não encontrados para reprocessamento.';
             console.error(`[REPROCESS_ERROR] ${errorMsg}`);
+            db.prepare("UPDATE extractions SET status = 'failed' WHERE id = ?").run(id);
             return { success: false, error: errorMsg };
         }
         console.log(`[REPROCESS] Encontrados ${rawData.length} registros brutos para a extração ${extractionInfo.year}.${extractionInfo.semester}.`);
@@ -95,17 +97,17 @@ export async function reprocessExtraction(id: number): Promise<{ success: boolea
 
         // 3. Atualizar arquivos no banco de dados em uma transação
         const updateTransaction = db.transaction(() => {
-            // 3.1. Excluir arquivos processados antigos
             console.log(`[REPROCESS] Excluindo arquivos antigos...`);
-            const deleteStmt = db.prepare('DELETE FROM processed_files WHERE extraction_id = ?');
-            deleteStmt.run(id);
+            db.prepare('DELETE FROM processed_files WHERE extraction_id = ?').run(id);
 
-            // 3.2. Inserir novos arquivos
             console.log(`[REPROCESS] Inserindo ${newFiles.length} novos arquivos...`);
             const insertStmt = db.prepare('INSERT INTO processed_files (extraction_id, filename, content) VALUES (?, ?, ?)');
             for (const file of newFiles) {
                 insertStmt.run(id, file.filename, file.content);
             }
+            
+            // Marcar como 'completed' no final da transação bem-sucedida
+            db.prepare("UPDATE extractions SET status = 'completed' WHERE id = ?").run(id);
         });
         
         updateTransaction();
@@ -115,6 +117,7 @@ export async function reprocessExtraction(id: number): Promise<{ success: boolea
     } catch (e) {
         const error = e instanceof Error ? e.message : 'Falha ao reprocessar a extração.';
         console.error('[REPROCESS_FATAL_ERROR]', error);
+        db.prepare("UPDATE extractions SET status = 'failed' WHERE id = ?").run(id);
         return { success: false, error };
     }
 }

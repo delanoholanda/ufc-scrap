@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Play, AlertCircle, Eye, Ban } from "lucide-react";
-import { scrapeUFCData } from "@/lib/actions";
+import { Loader2, Play, AlertCircle, Eye, XCircle } from "lucide-react";
+import { cancelExtraction } from "@/lib/cancel-action";
+import type { ScrapedDataRow } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import LogViewer from "./log-viewer";
 import { Switch } from "./ui/switch";
@@ -15,6 +16,7 @@ import { useRouter } from 'next/navigation';
 
 export default function ScraperView() {
   const [loading, setLoading] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
@@ -25,7 +27,9 @@ export default function ScraperView() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [semester, setSemester] = useState<string>("1");
+  const [currentExtractionId, setCurrentExtractionId] = useState<number | null>(null);
   const router = useRouter();
+
 
   useEffect(() => {
     const storedUser = localStorage.getItem('sigaa_username') || '';
@@ -35,12 +39,30 @@ export default function ScraperView() {
     setIsLoaded(true);
   }, []);
 
+  const handleCancel = async () => {
+    if (currentExtractionId === null) {
+      toast({ variant: 'destructive', title: 'Erro', description: 'Não há extração em andamento para cancelar.'});
+      return;
+    }
+    setIsCancelling(true);
+    setLogs(prev => [...prev, '[AVISO] Solicitação de cancelamento enviada. Aguardando o término do ciclo atual...']);
+    const result = await cancelExtraction(currentExtractionId);
+    if (!result.success) {
+      toast({ variant: 'destructive', title: 'Erro ao Cancelar', description: result.error });
+      setIsCancelling(false); // Allow user to try again
+    } else {
+       toast({ title: 'Cancelamento Solicitado', description: 'O processo será interrompido em breve.'});
+    }
+  };
+
   const handleScrapeSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     setLoading(true);
+    setIsCancelling(false);
     setError(null);
     setLogs([]);
+    setCurrentExtractionId(null);
 
     const formData = new FormData(event.currentTarget);
     formData.append("username", sigaaUsername);
@@ -56,53 +78,81 @@ export default function ScraperView() {
       if (!sigaaUsername || !sigaaPassword) {
         throw new Error("Credenciais do SIGAA não configuradas. Por favor, configure suas credenciais no menu de configurações para prosseguir com a ação.");
       }
-      
-      const result = await scrapeUFCData(formData);
-      
-      if (result.logs) {
-        setLogs(result.logs);
-      }
-      
-      if (result.cancelled) {
-          setError('A extração foi cancelada.');
-          toast({
-            variant: "destructive",
-            title: "Extração Cancelada",
-            description: "O processo foi interrompido pelo usuário.",
-          });
-      } else if (result.success && result.data) {
-        toast({
-          title: "Extração e Processamento Concluídos!",
-          description: `Foram encontrados e processados ${result.data.length} registros. Redirecionando para o histórico...`,
-        });
-        // Redirect to history page on success
-        router.push('/history');
 
-      } else {
-        const errorMessage = result.error || 'Unknown scraping error';
-        setError(errorMessage);
-        toast({
-          variant: "destructive",
-          title: "Falha na Extração",
-          description: errorMessage,
-        });
+      // Use a ReadableStream to get logs in real-time
+      const response = await fetch('/api/scrape', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.body) {
+        throw new Error("A resposta do servidor não contém um corpo para streaming.");
       }
+      
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        try {
+          // Handle multiple JSON objects in a single chunk
+          const jsonObjects = value.trim().split('\n').filter(s => s.trim() !== '');
+          for (const jsonString of jsonObjects) {
+             const chunk = JSON.parse(jsonString);
+              if(chunk.log) {
+                setLogs(prev => [...prev, chunk.log]);
+              }
+              if(chunk.error) {
+                setError(chunk.error);
+                toast({
+                  variant: "destructive",
+                  title: "Falha na Extração",
+                  description: chunk.error,
+                });
+              }
+              if(chunk.extractionId) {
+                setCurrentExtractionId(chunk.extractionId);
+              }
+              if (chunk.finalResult) {
+                if (chunk.finalResult.success) {
+                  toast({
+                    title: "Extração e Processamento Concluídos!",
+                    description: `Foram encontrados e processados ${chunk.finalResult.data.length} registros. Redirecionando para o histórico...`,
+                  });
+                  router.push('/history');
+                } else if (chunk.finalResult.cancelled) {
+                  toast({
+                      variant: "default",
+                      title: "Operação Cancelada",
+                      description: "A extração foi interrompida pelo usuário.",
+                  });
+                  setError("A extração foi cancelada pelo usuário.");
+                } else {
+                  setError(chunk.finalResult.error || 'Unknown scraping error');
+                }
+              }
+          }
+        } catch (e) {
+            // This might happen if a non-JSON chunk is received or if there's a parsing error.
+            console.warn("Could not parse stream chunk:", value, "Error:", e);
+        }
+      }
+
+
     } catch (e: any) {
-       if (e.name === 'AbortError') {
-            setError('A extração foi cancelada pelo usuário.');
-            setLogs(prev => [...prev, "[ERRO] A operação foi abortada pelo cliente."]);
-       } else {
-            const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-            setError(errorMessage);
-            setLogs(prev => [...prev, `[ERRO FATAL] ${errorMessage}`]);
-            toast({
-                variant: "destructive",
-                title: "Erro Inesperado",
-                description: errorMessage,
-            });
-       }
+        let errorMessage = e.message || 'An unknown error occurred.';
+        setError(errorMessage);
+        setLogs(prev => [...prev, `[ERRO FATAL] ${errorMessage}`]);
+        toast({
+            variant: "destructive",
+            title: "Erro Inesperado",
+            description: errorMessage,
+        });
     } finally {
       setLoading(false);
+      setIsCancelling(false);
+      setCurrentExtractionId(null);
     }
   };
 
@@ -138,10 +188,22 @@ export default function ScraperView() {
                 <Switch id="show-logs" checked={showLogs} onCheckedChange={setShowLogs} disabled={loading} />
                 <Label htmlFor="show-logs">Ver Logs</Label>
               </div>
-              <Button type="submit" className="w-full sm:w-auto" disabled={loading || !isLoaded}>
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                {loading ? 'Extraindo...' : (isLoaded ? 'Iniciar' : 'Carregando...')}
-              </Button>
+              {!loading ? (
+                 <Button type="submit" className="w-full sm:w-auto" disabled={!isLoaded}>
+                    <Play className="mr-2 h-4 w-4" />
+                    {isLoaded ? "Iniciar" : "Carregando..."}
+                 </Button>
+              ) : (
+                 <Button type="button" variant="destructive" className="w-full sm:w-auto" onClick={handleCancel} disabled={isCancelling}>
+                    {isCancelling ? (
+                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="mr-2 h-4 w-4" />
+                    )}
+                    {isCancelling ? "Cancelando..." : "Cancelar"}
+                 </Button>
+              )}
+
             </div>
           </form>
         </CardContent>
@@ -156,9 +218,9 @@ export default function ScraperView() {
       )}
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant={error.includes("cancelada") ? "default" : "destructive"}>
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Ocorreu um Erro ou Ação</AlertTitle>
+          <AlertTitle>{error.includes("cancelada") ? "Operação Cancelada" : "Ocorreu um Erro"}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

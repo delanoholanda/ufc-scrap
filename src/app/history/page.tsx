@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import {
   Accordion,
   AccordionContent,
@@ -12,9 +13,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import type { Extraction, CSVFile } from '@/lib/types';
+import type { Extraction, CSVFile, ExtractionStatus } from '@/lib/types';
 import { fetchExtractions, fetchExtractionDetails, deleteExtraction, reprocessExtraction } from '@/lib/history-actions';
-import { ArrowLeft, Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye } from 'lucide-react';
+import { ArrowLeft, Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,11 +28,20 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import CSVPreviewDialog from '@/components/csv-preview-dialog';
+import { cn } from '@/lib/utils';
 
 
 interface EnrichedExtraction extends Extraction {
     files?: CSVFile[];
 }
+
+const statusConfig: Record<ExtractionStatus, { text: string; icon: React.FC<any>, className: string }> = {
+    completed: { text: 'Concluído', icon: CheckCircle, className: 'bg-green-500 hover:bg-green-600' },
+    running: { text: 'Em Execução', icon: Loader2, className: 'bg-blue-500 hover:bg-blue-600 animate-pulse' },
+    failed: { text: 'Falhou', icon: XCircle, className: 'bg-red-500 hover:bg-red-600' },
+    cancelled: { text: 'Cancelado', icon: AlertTriangle, className: 'bg-yellow-500 hover:bg-yellow-600' },
+};
+
 
 export default function HistoryPage() {
   const [extractions, setExtractions] = useState<EnrichedExtraction[]>([]);
@@ -76,10 +86,14 @@ export default function HistoryPage() {
         toast({ title: 'Sucesso', description: 'Dados reprocessados e arquivos atualizados.' });
         // Update the files for the specific extraction
         setExtractions(prev => prev.map(ext => 
-            ext.id === id ? { ...ext, files: result.files } : ext
+            ext.id === id ? { ...ext, files: result.files, status: 'completed' } : ext
         ));
     } else {
         toast({ variant: 'destructive', title: 'Erro no Reprocessamento', description: result.error });
+        // Also update status to failed if reprocessing fails
+        setExtractions(prev => prev.map(ext =>
+            ext.id === id ? { ...ext, status: 'failed' } : ext
+        ));
     }
     setIsReprocessing(null);
   }
@@ -141,7 +155,10 @@ export default function HistoryPage() {
             </div>
           ) : (
             <Accordion type="single" collapsible className="w-full" value={openAccordionItem || undefined} onValueChange={setOpenAccordionItem}>
-              {extractions.map(ext => (
+              {extractions.map(ext => {
+                 const statusInfo = statusConfig[ext.status] || statusConfig.failed;
+                 const Icon = statusInfo.icon;
+                 return (
                  <AccordionItem value={`item-${ext.id}`} key={ext.id}>
                    <Card className='mb-2'>
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4">
@@ -149,9 +166,13 @@ export default function HistoryPage() {
                             <p className="font-semibold">Extração de {ext.year}.{ext.semester}</p>
                             <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
                         </div>
-                        <div className="flex gap-2 mt-4 sm:mt-0">
+                        <div className="flex items-center gap-2 mt-4 sm:mt-0">
+                           <Badge className={cn("text-white", statusInfo.className)}>
+                                <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
+                                {statusInfo.text}
+                            </Badge>
                            <AccordionTrigger asChild>
-                              <Button variant="outline">
+                              <Button variant="outline" disabled={ext.status === 'running'}>
                                 <ChevronDown className="mr-2 h-4 w-4" />
                                 Ver Arquivos
                               </Button>
@@ -159,7 +180,7 @@ export default function HistoryPage() {
                              <Button 
                                 variant="secondary"
                                 onClick={() => handleReprocess(ext.id)} 
-                                disabled={isReprocessing === ext.id}
+                                disabled={isReprocessing === ext.id || ext.status === 'running'}
                               >
                                 {isReprocessing === ext.id ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -170,7 +191,7 @@ export default function HistoryPage() {
                               </Button>
                             <AlertDialog>
                             <AlertDialogTrigger asChild>
-                                <Button variant="destructive">
+                                <Button variant="destructive" disabled={ext.status === 'running'}>
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 Excluir
                                 </Button>
@@ -215,7 +236,8 @@ export default function HistoryPage() {
                      </AccordionContent>
                    </Card>
                  </AccordionItem>
-              ))}
+                 )
+              })}
             </Accordion>
           )}
         </CardContent>

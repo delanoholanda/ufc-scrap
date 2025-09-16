@@ -23,10 +23,13 @@ export type User = {
   resetPasswordExpires?: string | null;
 };
 
+export type ExtractionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
 export type Extraction = {
   id: number;
   year: number;
   semester: number;
+  status: ExtractionStatus;
   createdAt: string;
 };
 
