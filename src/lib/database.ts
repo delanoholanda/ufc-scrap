@@ -1,0 +1,147 @@
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import type { User } from './types';
+
+const DB_FILE_NAME = 'ufcScraper.db';
+const dataDirectory = path.join(process.cwd(), 'data');
+const dbPath = path.join(dataDirectory, DB_FILE_NAME);
+
+let dbInstance: Database.Database | null = null;
+
+function initializeDB(): Database.Database {
+  if (dbInstance) {
+    return dbInstance;
+  }
+
+  // Ensure the data directory exists
+  if (!fs.existsSync(dataDirectory)) {
+    fs.mkdirSync(dataDirectory, { recursive: true });
+  }
+
+  const db = new Database(dbPath);
+  console.log('[DB] Database connected at:', dbPath);
+
+  // Enable WAL mode for better concurrency
+  db.pragma('journal_mode = WAL');
+
+  // Run initial schema setup
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      salt TEXT NOT NULL,
+      hash TEXT NOT NULL,
+      createdAt TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      resetPasswordToken TEXT,
+      resetPasswordExpires TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS extractions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      semester INTEGER NOT NULL,
+      createdAt TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS scraped_data (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      extraction_id INTEGER NOT NULL,
+      codigo TEXT,
+      componente TEXT,
+      docente TEXT,
+      turma TEXT,
+      matricula TEXT,
+      nome TEXT,
+      curso TEXT,
+      tipoReserva TEXT,
+      situacao TEXT,
+      FOREIGN KEY (extraction_id) REFERENCES extractions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS processed_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        extraction_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        content TEXT NOT NULL,
+        FOREIGN KEY (extraction_id) REFERENCES extractions(id) ON DELETE CASCADE
+    );
+  `);
+
+  console.log('[DB] Schema initialized.');
+
+  // Seed default user if no users exist
+  const userResult = db.prepare('SELECT count(*) as count FROM users').get() as { count: number } | undefined;
+  const userCount = userResult ? userResult.count : 0;
+
+  if (userCount === 0) {
+    console.log('[DB] No users found. Seeding default "ntic" user...');
+    const { salt, hash } = hashPassword('TroqueNTIC!@');
+    db.prepare('INSERT INTO users (name, username, email, salt, hash) VALUES (?, ?, ?, ?, ?)')
+      .run('Usuário Padrão', 'ntic', 'ntic@quixada.ufc.br', salt, hash);
+    console.log('[DB] Default user "ntic" created.');
+  }
+
+  dbInstance = db;
+  return db;
+}
+
+export function getDB() {
+  return initializeDB();
+}
+
+export function hashPassword(password: string): { salt: string; hash: string } {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return { salt, hash };
+}
+
+export function verifyPassword(password: string, hash: string, salt: string): boolean {
+  const hashToVerify = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return hash === hashToVerify;
+}
+
+export function findUserByUsername(username: string): User | null {
+  const db = getDB();
+  const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
+  const user = stmt.get(username) as any;
+  return user || null;
+}
+
+export function findUserByEmail(email: string): User | null {
+    const db = getDB();
+    const stmt = db.prepare('SELECT * FROM users WHERE email = ?');
+    const user = stmt.get(email) as User | undefined;
+    return user || null;
+}
+
+export function generatePasswordResetToken(userId: number): string {
+    const db = getDB();
+    const token = crypto.randomBytes(20).toString('hex');
+    const expires = new Date(Date.now() + 3600000); // 1 hour from now
+
+    const stmt = db.prepare('UPDATE users SET resetPasswordToken = ?, resetPasswordExpires = ? WHERE id = ?');
+    stmt.run(token, expires.toISOString(), userId);
+
+    return token;
+}
+
+export function getUserByResetToken(token: string): User | null {
+    const db = getDB();
+    const stmt = db.prepare('SELECT * FROM users WHERE resetPasswordToken = ? AND resetPasswordExpires > ?');
+    const user = stmt.get(token, new Date().toISOString()) as User | undefined;
+    return user || null;
+}
+
+export function findUserById(id: number): Omit<User, 'salt' | 'hash'> | null {
+  const db = getDB();
+  const stmt = db.prepare('SELECT id, name, username, email FROM users WHERE id = ?');
+  const user = stmt.get(id) as any;
+  return user || null;
+}
+
+// Ensure the database is initialized on module load
+initializeDB();
