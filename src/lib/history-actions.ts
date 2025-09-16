@@ -1,7 +1,7 @@
 'use server';
 
 import { getDB } from './database';
-import type { Extraction, ScrapedDataRow, CSVFile } from './types';
+import type { Extraction, ScrapedDataRow, CSVFile, ExtractionLog } from './types';
 import { processData } from './processing/process-data';
 
 export async function fetchExtractions(): Promise<{ success: boolean; data?: Extraction[]; error?: string }> {
@@ -20,7 +20,7 @@ export async function fetchExtractions(): Promise<{ success: boolean; data?: Ext
 export async function deleteExtraction(id: number): Promise<{ success: boolean; error?: string }> {
   try {
     const db = getDB();
-    // A chave estrangeira com ON DELETE CASCADE cuidará de apagar os dados em `scraped_data` e `processed_files`
+    // A chave estrangeira com ON DELETE CASCADE cuidará de apagar os dados em `scraped_data`, `processed_files` e `extraction_logs`
     const stmt = db.prepare('DELETE FROM extractions WHERE id = ?');
     const result = stmt.run(id);
 
@@ -62,6 +62,19 @@ export async function fetchExtractionDetails(id: number): Promise<{
     return { success: true, extraction, data, files };
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Falha ao buscar detalhes da extração.';
+    console.error('[HISTORY_ACTIONS_ERROR]', error);
+    return { success: false, error };
+  }
+}
+
+export async function fetchExtractionLogs(id: number): Promise<{ success: boolean; logs?: ExtractionLog[]; error?: string }> {
+  try {
+    const db = getDB();
+    const stmt = db.prepare('SELECT id, log_message, timestamp FROM extraction_logs WHERE extraction_id = ? ORDER BY timestamp ASC');
+    const logs = stmt.all(id) as ExtractionLog[];
+    return { success: true, logs };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'Falha ao buscar os logs da extração.';
     console.error('[HISTORY_ACTIONS_ERROR]', error);
     return { success: false, error };
   }

@@ -37,3 +37,10 @@ export type CSVFile = {
     filename: string;
     content: string;
 }
+
+export type ExtractionLog = {
+    id: number;
+    extraction_id: number;
+    log_message: string;
+    timestamp: string;
+}

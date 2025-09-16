@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { Extraction, CSVFile, ExtractionStatus } from '@/lib/types';
 import { fetchExtractions, fetchExtractionDetails, deleteExtraction, reprocessExtraction } from '@/lib/history-actions';
-import { ArrowLeft, Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye, CheckCircle, XCircle, AlertTriangle, Terminal } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +28,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import CSVPreviewDialog from '@/components/csv-preview-dialog';
+import LogPreviewDialog from '@/components/log-preview-dialog';
 import { cn } from '@/lib/utils';
 
 
@@ -166,7 +167,7 @@ export default function HistoryPage() {
                             <p className="font-semibold">Extração de {ext.year}.{ext.semester}</p>
                             <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
                         </div>
-                        <div className="flex items-center gap-2 mt-4 sm:mt-0">
+                        <div className="flex items-center gap-2 mt-4 sm:mt-0 flex-wrap justify-end">
                            <Badge className={cn("text-white", statusInfo.className)}>
                                 <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
                                 {statusInfo.text}
@@ -177,6 +178,7 @@ export default function HistoryPage() {
                                 Ver Arquivos
                               </Button>
                             </AccordionTrigger>
+                            <LogPreviewDialog extractionId={ext.id} />
                              <Button 
                                 variant="secondary"
                                 onClick={() => handleReprocess(ext.id)} 

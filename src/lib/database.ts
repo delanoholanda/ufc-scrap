@@ -70,6 +70,14 @@ function initializeDB(): Database.Database {
         content TEXT NOT NULL,
         FOREIGN KEY (extraction_id) REFERENCES extractions(id) ON DELETE CASCADE
     );
+
+     CREATE TABLE IF NOT EXISTS extraction_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      extraction_id INTEGER NOT NULL,
+      log_message TEXT NOT NULL,
+      timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      FOREIGN KEY (extraction_id) REFERENCES extractions(id) ON DELETE CASCADE
+    );
   `);
 
   console.log('[DB] Schema initialized.');
@@ -173,6 +181,17 @@ export function getExtractionStatus(id: number): ExtractionStatus {
     const stmt = db.prepare('SELECT status FROM extractions WHERE id = ?');
     const result = stmt.get(id) as { status: ExtractionStatus } | undefined;
     return result?.status || 'failed'; // Default to failed if not found
+}
+
+export function saveLog(extractionId: number, logMessage: string): void {
+  const db = getDB();
+  try {
+    const stmt = db.prepare('INSERT INTO extraction_logs (extraction_id, log_message) VALUES (?, ?)');
+    stmt.run(extractionId, logMessage);
+  } catch (e) {
+    // Log to console, but don't crash the extraction if logging fails
+    console.error(`[SAVE_LOG_ERROR] Failed to save log for extraction ${extractionId}:`, e);
+  }
 }
 
 
