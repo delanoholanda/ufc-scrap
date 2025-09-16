@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -8,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { User } from '@/lib/types';
 import { fetchAllUsers, deleteUser } from '@/lib/auth-actions';
-import { ArrowLeft, Trash2, UserPlus, Users, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Trash2, UserPlus, Users, AlertCircle, Edit } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -33,6 +34,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
@@ -127,7 +129,7 @@ export default function UsersPage() {
                     <Users />
                     Gerenciamento de Usuários
                 </CardTitle>
-                <CardDescription>Adicione, visualize e remova usuários do sistema.</CardDescription>
+                <CardDescription>Adicione, visualize, edite e remova usuários do sistema.</CardDescription>
                 </div>
             </div>
              <Dialog open={isAddUserOpen} onOpenChange={setIsAddUserOpen}>
@@ -137,7 +139,13 @@ export default function UsersPage() {
                         Adicionar Usuário
                     </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[480px] p-0">
+                <DialogContent className="sm:max-w-[480px]">
+                    <DialogHeader>
+                        <DialogTitle>Criar Novo Usuário</DialogTitle>
+                        <DialogDescription>
+                            Preencha os dados para criar um novo acesso.
+                        </DialogDescription>
+                    </DialogHeader>
                    <SignupForm onSignup={handleSignup} onSwitchToLogin={() => setIsAddUserOpen(false)} />
                 </DialogContent>
             </Dialog>
@@ -168,7 +176,12 @@ export default function UsersPage() {
                       <TableCell>{user.username}</TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell>{formatDate(user.createdAt)}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right space-x-2">
+                         <Link href={`/users/${user.id}`} passHref>
+                            <Button variant="outline" size="icon">
+                                <Edit className="h-4 w-4" />
+                            </Button>
+                         </Link>
                          <AlertDialog>
                             <AlertDialogTrigger asChild>
                                 <Button variant="destructive" size="icon" disabled={user.id === currentUserId}>

@@ -1,3 +1,4 @@
+
 'use server';
 
 import { getDB, findUserByUsername, verifyPassword, hashPassword, findUserById as dbFindUserById, findUserByEmail, generatePasswordResetToken, getUserByResetToken } from './database';
@@ -98,6 +99,8 @@ export async function signupUser(data: z.infer<typeof SignupSchema>) {
 
 const UpdateProfileSchema = z.object({
     userId: z.number(),
+    name: z.string().min(3, "O nome deve ter pelo menos 3 caracteres."),
+    username: z.string().min(3, "O nome de usuário deve ter pelo menos 3 caracteres."),
     email: z.string().email("Formato de email inválido."),
     password: z.string().min(6, "A nova senha deve ter pelo menos 6 caracteres.").optional().or(z.literal('')),
 });
@@ -111,18 +114,25 @@ export async function updateUserProfile(data: z.infer<typeof UpdateProfileSchema
 
         const db = getDB();
 
-        // Check if new email is already in use by another user
-        const existingUser = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(data.email, data.userId);
+        // Check if new username or email is already in use by another user
+        const existingUser = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(data.username, data.email, data.userId);
         if (existingUser) {
-            return { success: false, error: 'Este email já está em uso por outra conta.' };
+            return { success: false, error: 'Nome de usuário ou email já está em uso por outra conta.' };
         }
+        
+        let query = 'UPDATE users SET name = ?, username = ?, email = ?';
+        const params: (string | number)[] = [data.name, data.username, data.email];
 
         if (data.password) {
             const { salt, hash } = hashPassword(data.password);
-            db.prepare('UPDATE users SET email = ?, salt = ?, hash = ? WHERE id = ?').run(data.email, salt, hash, data.userId);
-        } else {
-            db.prepare('UPDATE users SET email = ? WHERE id = ?').run(data.email, data.userId);
+            query += ', salt = ?, hash = ?';
+            params.push(salt, hash);
         }
+
+        query += ' WHERE id = ?';
+        params.push(data.userId);
+
+        db.prepare(query).run(...params);
 
         return { success: true };
     } catch (e) {

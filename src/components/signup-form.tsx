@@ -3,15 +3,12 @@
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { UserPlus, BookOpenCheck, Eye, EyeOff } from "lucide-react";
+import { UserPlus, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { signupUser } from "@/lib/auth-actions";
@@ -56,18 +53,9 @@ export default function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProp
   };
 
   return (
-    <Card className="w-full z-10 shadow-none border-0">
-      <CardHeader className="text-center">
-        <div className="mx-auto bg-primary text-primary-foreground p-3 rounded-full w-fit mb-4">
-          <UserPlus className="h-8 w-8" />
-        </div>
-        <CardTitle className="text-2xl font-bold">Criar Novo Usuário</CardTitle>
-        <CardDescription>
-          Preencha os dados para criar um novo acesso.
-        </CardDescription>
-      </CardHeader>
+    <Card className="w-full z-10 shadow-none border-0 p-0">
       <form onSubmit={handleSubmit}>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 pt-4">
           <div className="space-y-2">
             <Label htmlFor="name">Nome Completo</Label>
             <Input id="name" type="text" placeholder="Nome do Usuário" required value={name} onChange={(e) => setName(e.target.value)} />
