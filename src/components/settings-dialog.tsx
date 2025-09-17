@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,7 +21,11 @@ import { testConnections } from '@/lib/system-actions';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
-export default function SettingsDialog() {
+interface SettingsDialogProps {
+    children?: ReactNode;
+}
+
+export default function SettingsDialog({ children }: SettingsDialogProps) {
   const { username, password, saveCredentials, isLoaded } = useCredentials();
   const [localUser, setLocalUser] = useState('');
   const [localPass, setLocalPass] = useState('');
@@ -87,9 +91,13 @@ export default function SettingsDialog() {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="outline" size="icon" aria-label="Configurações">
-          <Settings className="h-4 w-4" />
-        </Button>
+        {children ? (
+            children
+        ) : (
+            <Button variant="outline" size="icon" aria-label="Configurações">
+                <Settings className="h-4 w-4" />
+            </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>

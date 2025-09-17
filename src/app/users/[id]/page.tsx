@@ -9,10 +9,10 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { findUserById, updateUserProfile } from '@/lib/auth-actions';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Save, Loader2, Eye, EyeOff, User } from 'lucide-react';
-import Link from 'next/link';
+import { Save, Loader2, Eye, EyeOff, User as UserIcon } from 'lucide-react';
 import type { User as UserType } from '@/lib/types';
 import { useParams, useRouter } from 'next/navigation';
+import MainLayout from '@/components/main-layout';
 
 export default function EditUserPage() {
   const [user, setUser] = useState<Omit<UserType, 'salt' | 'hash'> | null>(null);
@@ -25,12 +25,21 @@ export default function EditUserPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
   const userId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   useEffect(() => {
+    const sessionUserId = sessionStorage.getItem("userId");
+    if (sessionUserId) {
+        setCurrentUserId(parseInt(sessionUserId, 10));
+    } else {
+        window.location.href = '/'; // Redirect if not logged in
+    }
+
     if (!userId) {
       router.push('/users');
       return;
@@ -73,91 +82,66 @@ export default function EditUserPage() {
     setIsSaving(false);
   };
 
-  if (isLoading) {
+  const handleLogout = () => {
+    sessionStorage.removeItem("userId");
+    window.location.href = '/';
+  };
+
+  if (isLoading || !currentUserId || !user) {
     return (
-        <div className="flex min-h-screen w-full items-center justify-center bg-background">
-             <Card className="w-full max-w-lg">
-                <CardHeader>
-                    <Skeleton className="h-8 w-48" />
-                    <Skeleton className="h-4 w-64 mt-2" />
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    <div className="space-y-2">
-                        <Skeleton className="h-4 w-20" />
-                        <Skeleton className="h-10 w-full" />
-                    </div>
-                     <div className="space-y-2">
-                        <Skeleton className="h-4 w-20" />
-                        <Skeleton className="h-10 w-full" />
-                    </div>
-                     <div className="space-y-2">
-                        <Skeleton className="h-4 w-20" />
-                        <Skeleton className="h-10 w-full" />
-                    </div>
-                     <Skeleton className="h-10 w-28" />
-                </CardContent>
-             </Card>
+        <div className="flex h-screen w-screen items-center justify-center bg-background">
+             <Loader2 className="h-10 w-10 animate-spin text-primary" />
         </div>
     );
   }
 
-  if (!user) {
-    return (
-        <div className="flex min-h-screen w-full items-center justify-center">
-            <p>Usuário não encontrado. Redirecionando...</p>
-        </div>
-    )
-  }
-
   return (
-    <div className="flex min-h-screen w-full flex-col items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-lg">
-        <CardHeader>
-          <div className="flex items-center gap-4">
-             <Link href="/users" passHref>
-                <Button variant="outline" size="icon">
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
-            </Link>
-            <div>
-              <CardTitle className="flex items-center gap-2"><User /> Editando Perfil de {user.name}</CardTitle>
-              <CardDescription>Atualize as informações do usuário abaixo.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <form onSubmit={handleSave}>
-            <CardContent className="space-y-4">
-                <div className="space-y-2">
-                    <Label htmlFor="name">Nome Completo</Label>
-                    <Input id="name" value={name} onChange={e => setName(e.target.value)} required />
+     <MainLayout onLogout={handleLogout} userId={currentUserId}>
+         <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
+            <header className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                        <UserIcon />
+                        Editando Perfil de {user.name}
+                    </h1>
+                    <p className="text-muted-foreground">Atualize as informações do usuário abaixo.</p>
                 </div>
-                 <div className="space-y-2">
-                    <Label htmlFor="username">Nome de Usuário</Label>
-                    <Input id="username" value={username} onChange={e => setUsername(e.target.value)} required />
-                </div>
-                 <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
-                </div>
-                <div className="space-y-2 relative">
-                    <Label htmlFor="password">Nova Senha</Label>
-                    <Input id="password" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
-                    <button
-                        type="button"
-                        className="absolute right-3 top-[2.4rem] text-muted-foreground"
-                        onClick={() => setShowPassword(!showPassword)}
-                        >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                    <p className='text-xs text-muted-foreground'>A senha deve ter no mínimo 6 caracteres.</p>
-                </div>
-                 <Button type="submit" disabled={isSaving}>
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Salvar Alterações
-                 </Button>
-            </CardContent>
-        </form>
-      </Card>
-    </div>
+            </header>
+            <Card className="w-full max-w-2xl mt-4">
+                <form onSubmit={handleSave}>
+                    <CardContent className="space-y-4 pt-6">
+                        <div className="space-y-2">
+                            <Label htmlFor="name">Nome Completo</Label>
+                            <Input id="name" value={name} onChange={e => setName(e.target.value)} required />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="username">Nome de Usuário</Label>
+                            <Input id="username" value={username} onChange={e => setUsername(e.target.value)} required />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="email">Email</Label>
+                            <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+                        </div>
+                        <div className="space-y-2 relative">
+                            <Label htmlFor="password">Nova Senha</Label>
+                            <Input id="password" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
+                            <button
+                                type="button"
+                                className="absolute right-3 top-[2.4rem] text-muted-foreground"
+                                onClick={() => setShowPassword(!showPassword)}
+                                >
+                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                            <p className='text-xs text-muted-foreground'>A senha deve ter no mínimo 6 caracteres.</p>
+                        </div>
+                        <Button type="submit" disabled={isSaving}>
+                            {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                            Salvar Alterações
+                        </Button>
+                    </CardContent>
+                </form>
+            </Card>
+        </div>
+     </MainLayout>
   );
 }

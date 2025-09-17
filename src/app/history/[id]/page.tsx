@@ -8,21 +8,29 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { Extraction, ScrapedDataRow } from '@/lib/types';
 import { fetchExtractionDetails } from '@/lib/history-actions';
-import { ArrowLeft, Eye, History as HistoryIcon, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Eye, History as HistoryIcon, AlertCircle, Loader2 } from 'lucide-react';
 import ResultsTable from '@/components/results-table';
+import MainLayout from '@/components/main-layout';
+import { useParams } from 'next/navigation';
 
-interface DetailsPageProps {
-    params: { id: string };
-}
-
-export default function HistoryDetailsPage({ params }: DetailsPageProps) {
+export default function HistoryDetailsPage() {
   const [extraction, setExtraction] = useState<Extraction | null>(null);
   const [data, setData] = useState<ScrapedDataRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [userId, setUserId] = useState<number | null>(null);
   const { toast } = useToast();
 
-  const resolvedParams = use(params);
-  const extractionId = parseInt(resolvedParams.id, 10);
+  const params = useParams();
+  const extractionId = parseInt(Array.isArray(params.id) ? params.id[0] : params.id, 10);
+
+  useEffect(() => {
+    const sessionUserId = sessionStorage.getItem("userId");
+    if (sessionUserId) {
+      setUserId(parseInt(sessionUserId, 10));
+    } else {
+        window.location.href = '/';
+    }
+  }, []);
 
   useEffect(() => {
     if (isNaN(extractionId)) {
@@ -45,46 +53,53 @@ export default function HistoryDetailsPage({ params }: DetailsPageProps) {
     loadDetails();
   }, [extractionId, toast]);
 
+  const handleLogout = () => {
+    sessionStorage.removeItem("userId");
+    window.location.href = '/';
+  };
+
+  if (!userId) {
+     return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen w-full flex-col items-center bg-background p-4">
-       <Card className="w-full max-w-6xl">
-        <CardHeader>
-          <div className="flex items-center gap-4">
-            <Link href="/history" passHref>
-              <Button variant="outline" size="icon">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Eye />
-                Dados Brutos da Extração
-              </CardTitle>
-              {isLoading ? (
-                <Skeleton className="h-4 w-48 mt-2" />
-              ): (
-                 <CardDescription>Resultados brutos da extração de {extraction?.year}.{extraction?.semester} realizada em {extraction ? new Date(extraction.createdAt).toLocaleDateString('pt-BR') : ''}.</CardDescription>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-4">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-64 w-full" />
-            </div>
-          ) : data.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center">
-              <AlertCircle className="h-10 w-10 text-muted-foreground" />
-              <p className="text-muted-foreground">Nenhum dado encontrado para esta extração.</p>
-            </div>
-          ) : (
-            <ResultsTable data={data} />
-          )}
-        </CardContent>
-      </Card>
-    </div>
+     <MainLayout onLogout={handleLogout} userId={userId}>
+        <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
+             <header className="flex items-center justify-between">
+                <div>
+                     <CardTitle className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                        <Eye />
+                        Dados Brutos da Extração
+                    </CardTitle>
+                    {isLoading ? (
+                        <Skeleton className="h-4 w-48 mt-2" />
+                    ): (
+                        <CardDescription className="text-muted-foreground">Resultados brutos da extração de {extraction?.year}.{extraction?.semester} realizada em {extraction ? new Date(extraction.createdAt).toLocaleDateString('pt-BR') : ''}.</CardDescription>
+                    )}
+                </div>
+            </header>
+            <Card className="w-full mt-4">
+                <CardContent className="pt-6">
+                {isLoading ? (
+                    <div className="space-y-4">
+                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-64 w-full" />
+                    </div>
+                ) : data.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center">
+                    <AlertCircle className="h-10 w-10 text-muted-foreground" />
+                    <p className="text-muted-foreground">Nenhum dado encontrado para esta extração.</p>
+                    </div>
+                ) : (
+                    <ResultsTable data={data} />
+                )}
+                </CardContent>
+            </Card>
+        </div>
+     </MainLayout>
   );
 }

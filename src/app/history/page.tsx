@@ -30,6 +30,7 @@ import {
 import CSVPreviewDialog from '@/components/csv-preview-dialog';
 import LogPreviewDialog from '@/components/log-preview-dialog';
 import { cn } from '@/lib/utils';
+import MainLayout from '@/components/main-layout';
 
 
 interface EnrichedExtraction extends Extraction {
@@ -50,6 +51,16 @@ export default function HistoryPage() {
   const [openAccordionItem, setOpenAccordionItem] = useState<string | null>(null);
   const [isReprocessing, setIsReprocessing] = useState<number | null>(null);
   const { toast } = useToast();
+  const [userId, setUserId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const sessionUserId = sessionStorage.getItem("userId");
+    if (sessionUserId) {
+      setUserId(parseInt(sessionUserId, 10));
+    } else {
+        window.location.href = '/';
+    }
+  }, []);
 
   useEffect(() => {
     async function loadExtractions() {
@@ -121,129 +132,135 @@ export default function HistoryPage() {
     document.body.removeChild(link);
   };
 
+  const handleLogout = () => {
+    sessionStorage.removeItem("userId");
+    window.location.href = '/';
+  };
+
+  if (!userId) {
+     return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
+  }
+
 
   return (
-    <div className="flex min-h-screen w-full flex-col items-center bg-background p-4">
-       <Card className="w-full max-w-4xl">
-        <CardHeader>
-          <div className="flex items-center gap-4">
-            <Link href="/" passHref>
-              <Button variant="outline" size="icon">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <HistoryIcon />
-                Histórico de Extrações
-              </CardTitle>
-              <CardDescription>Consulte, visualize ou exclua extrações de dados anteriores.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-4">
-              {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-20 w-full" />
-              ))}
-            </div>
-          ) : extractions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center">
-              <AlertCircle className="h-10 w-10 text-muted-foreground" />
-              <p className="text-muted-foreground">Nenhuma extração encontrada.</p>
-              <p className="text-sm text-muted-foreground">Execute uma nova extração na tela principal.</p>
-            </div>
-          ) : (
-            <Accordion type="single" collapsible className="w-full" value={openAccordionItem || undefined} onValueChange={setOpenAccordionItem}>
-              {extractions.map(ext => {
-                 const statusInfo = statusConfig[ext.status] || statusConfig.failed;
-                 const Icon = statusInfo.icon;
-                 return (
-                 <AccordionItem value={`item-${ext.id}`} key={ext.id}>
-                   <Card className='mb-2'>
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4">
-                        <div className='flex-grow'>
-                            <p className="font-semibold">Extração de {ext.year}.{ext.semester}</p>
-                            <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
-                        </div>
-                        <div className="flex items-center gap-2 mt-4 sm:mt-0 flex-wrap justify-end">
-                           <Badge className={cn("text-white", statusInfo.className)}>
-                                <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
-                                {statusInfo.text}
-                            </Badge>
-                           <AccordionTrigger asChild>
-                              <Button variant="outline" disabled={ext.status === 'running'}>
-                                <ChevronDown className="mr-2 h-4 w-4" />
-                                Ver Arquivos
-                              </Button>
-                            </AccordionTrigger>
-                            <LogPreviewDialog extractionId={ext.id} />
-                             <Button 
-                                variant="secondary"
-                                onClick={() => handleReprocess(ext.id)} 
-                                disabled={isReprocessing === ext.id || ext.status === 'running'}
-                              >
-                                {isReprocessing === ext.id ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="mr-2 h-4 w-4" />
-                                )}
-                                Reprocessar
-                              </Button>
-                            <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                                <Button variant="destructive" disabled={ext.status === 'running'}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Excluir
-                                </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                    Esta ação não pode ser desfeita. Isso excluirá permanentemente os dados desta extração.
-                                </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(ext.id)}>Continuar</AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                            </AlertDialog>
-                        </div>
-                    </div>
-                     <AccordionContent>
-                        <div className="p-4 pt-0">
-                           {ext.files && ext.files.length > 0 ? (
-                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                                {ext.files.map(file => (
-                                    <Card key={file.filename} className="p-4 flex flex-col items-center justify-center text-center">
-                                        <FileText className="h-8 w-8 mb-2 text-primary"/>
-                                        <p className="text-sm font-medium leading-tight mb-2 break-all">{file.filename}</p>
-                                        <div className="flex gap-2 mt-2">
-                                           <CSVPreviewDialog file={file} />
-                                            <Button size="sm" variant="outline" onClick={() => downloadFile(file)}>
-                                                <Download className="mr-2 h-4 w-4"/>
-                                                Download
-                                            </Button>
-                                        </div>
-                                    </Card>
-                                ))}
+    <MainLayout onLogout={handleLogout} userId={userId}>
+        <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
+            <header className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                        <HistoryIcon />
+                        Histórico de Extrações
+                    </h1>
+                    <p className="text-muted-foreground">Consulte, visualize ou exclua extrações de dados anteriores.</p>
+                </div>
+            </header>
+
+            {isLoading ? (
+                <div className="space-y-4">
+                {[...Array(3)].map((_, i) => (
+                    <Skeleton key={i} className="h-20 w-full" />
+                ))}
+                </div>
+            ) : extractions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center mt-8">
+                <AlertCircle className="h-12 w-12 text-muted-foreground" />
+                <p className="text-xl font-medium">Nenhuma extração encontrada.</p>
+                <p className="text-muted-foreground">Execute uma nova extração na tela principal para ver o histórico aqui.</p>
+                </div>
+            ) : (
+                <Accordion type="single" collapsible className="w-full" value={openAccordionItem || undefined} onValueChange={setOpenAccordionItem}>
+                {extractions.map(ext => {
+                    const statusInfo = statusConfig[ext.status] || statusConfig.failed;
+                    const Icon = statusInfo.icon;
+                    return (
+                    <AccordionItem value={`item-${ext.id}`} key={ext.id} className="border-b-0">
+                    <Card className='mb-2 shadow-sm transition-all hover:shadow-md'>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
+                            <div className='flex-grow'>
+                                <p className="font-semibold text-lg">Extração de {ext.year}.{ext.semester}</p>
+                                <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
                             </div>
-                           ) : (
-                             <div className="text-center text-muted-foreground py-4">Nenhum arquivo processado para esta extração.</div>
-                           )}
+                            <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
+                            <Badge className={cn("text-white", statusInfo.className)}>
+                                    <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
+                                    {statusInfo.text}
+                                </Badge>
+                            <AccordionTrigger asChild>
+                                <Button variant="outline" size="sm" disabled={ext.status === 'running' || !ext.files || ext.files.length === 0}>
+                                    <ChevronDown className="mr-2 h-4 w-4" />
+                                    Arquivos
+                                </Button>
+                                </AccordionTrigger>
+                                <LogPreviewDialog extractionId={ext.id} />
+                                <Button 
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => handleReprocess(ext.id)} 
+                                    disabled={isReprocessing === ext.id || ext.status === 'running'}
+                                >
+                                    {isReprocessing === ext.id ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    )}
+                                    Reprocessar
+                                </Button>
+                                <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="destructive" size="sm" disabled={ext.status === 'running'}>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Excluir
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                    <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                        Esta ação não pode ser desfeita. Isso excluirá permanentemente os dados desta extração.
+                                    </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleDelete(ext.id)}>Continuar</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                                </AlertDialog>
+                            </div>
                         </div>
-                     </AccordionContent>
-                   </Card>
-                 </AccordionItem>
-                 )
-              })}
-            </Accordion>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                        <AccordionContent>
+                            <div className="p-4 pt-0">
+                            {ext.files && ext.files.length > 0 ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                    {ext.files.map(file => (
+                                        <Card key={file.filename} className="p-4 flex flex-col items-center justify-center text-center">
+                                            <FileText className="h-8 w-8 mb-2 text-primary"/>
+                                            <p className="text-sm font-medium leading-tight mb-2 break-all">{file.filename}</p>
+                                            <div className="flex gap-2 mt-2">
+                                            <CSVPreviewDialog file={file} />
+                                                <Button size="sm" variant="outline" onClick={() => downloadFile(file)}>
+                                                    <Download className="mr-2 h-4 w-4"/>
+                                                    Download
+                                                </Button>
+                                            </div>
+                                        </Card>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-center text-muted-foreground py-4">Nenhum arquivo processado para esta extração.</div>
+                            )}
+                            </div>
+                        </AccordionContent>
+                    </Card>
+                    </AccordionItem>
+                    )
+                })}
+                </Accordion>
+            )}
+        </div>
+    </MainLayout>
   );
 }
