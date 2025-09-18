@@ -4,12 +4,41 @@ import { getDB } from './database';
 import type { Extraction, ScrapedDataRow, CSVFile, ExtractionLog } from './types';
 import { processData } from './processing/process-data';
 
-export async function fetchExtractions(): Promise<{ success: boolean; data?: Extraction[]; error?: string }> {
+type EnrichedExtraction = Extraction & { files?: CSVFile[] };
+
+export async function fetchExtractions(): Promise<{ success: boolean; data?: EnrichedExtraction[]; error?: string }> {
   try {
     const db = getDB();
-    const stmt = db.prepare('SELECT id, year, semester, status, createdAt FROM extractions ORDER BY createdAt DESC');
-    const data = stmt.all() as Extraction[];
-    return { success: true, data };
+    // Fetch all extractions
+    const extractionsStmt = db.prepare('SELECT id, year, semester, status, createdAt FROM extractions ORDER BY createdAt DESC');
+    const extractions = extractionsStmt.all() as Extraction[];
+
+    if (extractions.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    // Fetch all files for all extractions in one go
+    const extractionIds = extractions.map(e => e.id);
+    const placeholders = extractionIds.map(() => '?').join(',');
+    const filesStmt = db.prepare(`SELECT extraction_id, filename, content FROM processed_files WHERE extraction_id IN (${placeholders})`);
+    const allFiles = filesStmt.all(...extractionIds) as (CSVFile & { extraction_id: number })[];
+
+    // Group files by extraction_id
+    const filesByExtractionId = allFiles.reduce<Record<number, CSVFile[]>>((acc, file) => {
+      if (!acc[file.extraction_id]) {
+        acc[file.extraction_id] = [];
+      }
+      acc[file.extraction_id].push({ filename: file.filename, content: file.content });
+      return acc;
+    }, {});
+
+    // Combine extractions with their files
+    const enrichedData: EnrichedExtraction[] = extractions.map(ext => ({
+      ...ext,
+      files: filesByExtractionId[ext.id] || [],
+    }));
+
+    return { success: true, data: enrichedData };
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Falha ao buscar extrações.';
     console.error('[HISTORY_ACTIONS_ERROR]', error);
@@ -17,20 +46,28 @@ export async function fetchExtractions(): Promise<{ success: boolean; data?: Ext
   }
 }
 
-export async function deleteExtraction(id: number): Promise<{ success: boolean; error?: string }> {
+export async function deleteExtraction(ids: number | number[]): Promise<{ success: boolean; error?: string }> {
+  const idsToDelete = Array.isArray(ids) ? ids : [ids];
+  if (idsToDelete.length === 0) {
+    return { success: true }; // Nothing to delete
+  }
+
   try {
     const db = getDB();
-    // A chave estrangeira com ON DELETE CASCADE cuidará de apagar os dados em `scraped_data`, `processed_files` e `extraction_logs`
-    const stmt = db.prepare('DELETE FROM extractions WHERE id = ?');
-    const result = stmt.run(id);
+    const placeholders = idsToDelete.map(() => '?').join(',');
+    const stmt = db.prepare(`DELETE FROM extractions WHERE id IN (${placeholders})`);
+    
+    const result = db.transaction(() => {
+      return stmt.run(...idsToDelete);
+    })();
 
     if (result.changes === 0) {
-      return { success: false, error: 'Nenhuma extração encontrada com este ID.' };
+      return { success: false, error: 'Nenhuma extração encontrada com os IDs fornecidos.' };
     }
     
     return { success: true };
   } catch (e) {
-    const error = e instanceof Error ? e.message : 'Falha ao excluir extração.';
+    const error = e instanceof Error ? e.message : 'Falha ao excluir extração(ões).';
     console.error('[HISTORY_ACTIONS_ERROR]', error);
     return { success: false, error };
   }

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Play, AlertCircle, Eye, XCircle } from "lucide-react";
+import { Loader2, Play, AlertCircle, Eye, XCircle, Info } from "lucide-react";
 import { cancelExtraction } from "@/lib/cancel-action";
 import type { ScrapedDataRow } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
@@ -18,6 +18,7 @@ export default function ScraperView() {
   const [loading, setLoading] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
   const [visibleMode, setVisibleMode] = useState(false);
@@ -61,6 +62,7 @@ export default function ScraperView() {
     setLoading(true);
     setIsCancelling(false);
     setError(null);
+    setInfo(null);
     setLogs([]);
     setCurrentExtractionId(null);
 
@@ -115,7 +117,9 @@ export default function ScraperView() {
                 setCurrentExtractionId(chunk.extractionId);
               }
               if (chunk.finalResult) {
-                if (chunk.finalResult.success) {
+                if (chunk.finalResult.noChanges) {
+                  setInfo("Nenhuma alteração detectada desde a última extração bem-sucedida para este período.");
+                } else if (chunk.finalResult.success) {
                   toast({
                     title: "Extração e Processamento Concluídos!",
                     description: `Foram encontrados e processados ${chunk.finalResult.data.length} registros. Redirecionando para o histórico...`,
@@ -215,6 +219,14 @@ export default function ScraperView() {
             <p className="text-muted-foreground">Aguarde, o robô está trabalhando...</p>
             <p className="text-sm text-muted-foreground">Isso pode levar alguns minutos. Não feche esta aba.</p>
         </div>
+      )}
+
+      {info && !loading && (
+         <Alert variant="default">
+          <Info className="h-4 w-4" />
+          <AlertTitle>Informação</AlertTitle>
+          <AlertDescription>{info}</AlertDescription>
+        </Alert>
       )}
 
       {error && (

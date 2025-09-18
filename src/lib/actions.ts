@@ -1,7 +1,7 @@
 'use server';
-import type { ScrapedDataRow, CSVFile } from '@/lib/types';
+import type { ScrapedDataRow, CSVFile, Extraction } from '@/lib/types';
 import puppeteer, { type PuppeteerLaunchOptions, ElementHandle, Browser, Page } from 'puppeteer';
-import { getDB, getExtractionStatus } from './database';
+import { getDB, getExtractionStatus, fetchLatestSuccessfulExtraction } from './database';
 import { processData } from './processing/process-data';
 
 
@@ -78,12 +78,46 @@ async function saveProcessedFiles(extractionId: number, files: CSVFile[]) {
     }
 }
 
+function compareScrapedData(oldData: ScrapedDataRow[], newData: ScrapedDataRow[]): ScrapedDataRow[] {
+    const oldDataMap = new Map<string, ScrapedDataRow>();
+    oldData.forEach(row => {
+        const key = `${row.turma}-${row.matricula}`; // Unique key per student per class
+        oldDataMap.set(key, row);
+    });
+
+    const newDataMap = new Map<string, ScrapedDataRow>();
+    newData.forEach(row => {
+        const key = `${row.turma}-${row.matricula}`;
+        newDataMap.set(key, row);
+    });
+
+    const differences: ScrapedDataRow[] = [];
+
+    // Check for additions and modifications
+    newDataMap.forEach((newRow, key) => {
+        const oldRow = oldDataMap.get(key);
+        if (!oldRow || oldRow.situacao !== newRow.situacao) {
+            differences.push(newRow);
+        }
+    });
+
+    // Check for removals
+    oldDataMap.forEach((oldRow, key) => {
+        if (!newDataMap.has(key)) {
+            // To represent a removal, we add the old row with a "REMOVED" status
+            differences.push({ ...oldRow, situacao: 'REMOVIDO' });
+        }
+    });
+    
+    return differences;
+}
+
 
 export async function scrapeUFCData(
     formData: FormData,
     onLog: (log: string) => Promise<void>,
     onIdCreated: (id: number) => Promise<void>
-): Promise<{ success: boolean; data?: ScrapedDataRow[]; error?: string, cancelled?: boolean }> {
+): Promise<{ success: boolean; data?: ScrapedDataRow[]; error?: string, cancelled?: boolean, noChanges?: boolean }> {
     const year = formData.get("year") as string;
     const semester = formData.get("semester") as string;
     const visibleMode = formData.get("visibleMode") === 'on';
@@ -109,6 +143,15 @@ export async function scrapeUFCData(
     }
     
     await addLog(`Iniciando extração para ${year}/${semester}.`);
+    
+    // Check for previous extraction
+    await addLog("Verificando extrações anteriores...");
+    const previousExtraction = await fetchLatestSuccessfulExtraction(year, semester);
+    if (previousExtraction.extraction && previousExtraction.data) {
+        await addLog(`Extração anterior encontrada (ID: ${previousExtraction.extraction.id}). Os dados serão comparados.`);
+    } else {
+        await addLog("Nenhuma extração bem-sucedida anterior encontrada. Uma extração completa será realizada.");
+    }
     
     let extractionId: number;
     try {
@@ -364,15 +407,29 @@ export async function scrapeUFCData(
         }
 
         if (scrapedData.length > 0) {
-            await addLog("Etapa 8: Salvando dados brutos no banco de dados...");
+            await addLog("Etapa 8: Salvando dados brutos da nova extração no banco de dados...");
             const saveResult = await saveData(extractionId, scrapedData);
             if (!saveResult.success) {
                 throw new Error(saveResult.error || "Falha ao salvar dados brutos.");
             }
             await addLog("Dados brutos salvos com sucesso.");
             
-            await addLog("Etapa 9: Processando dados e gerando arquivos CSV...");
-            const processResult = await processData(scrapedData, `${year}.${semester}`);
+            let dataToProcess = scrapedData;
+
+            if (previousExtraction.data && previousExtraction.data.length > 0) {
+                await addLog("Comparando dados novos com a extração anterior...");
+                const differences = compareScrapedData(previousExtraction.data, scrapedData);
+                await addLog(`Comparação concluída. Encontradas ${differences.length} diferenças.`);
+                if (differences.length === 0) {
+                    await updateExtractionStatus(extractionId, 'completed');
+                    await addLog("Nenhuma alteração detectada desde a última extração bem-sucedida. Processo encerrado.");
+                    return { success: true, noChanges: true };
+                }
+                dataToProcess = differences;
+            }
+
+            await addLog(`Etapa 9: Processando ${dataToProcess.length} registros e gerando arquivos CSV...`);
+            const processResult = await processData(dataToProcess, `${year}.${semester}`);
             
             await addLog("Etapa 10: Salvando arquivos processados no banco de dados...");
             const saveFilesResult = await saveProcessedFiles(extractionId, processResult);

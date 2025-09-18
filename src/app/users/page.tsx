@@ -58,7 +58,6 @@ export default function UsersPage() {
     } else {
         window.location.href = '/'; // Redirect if not logged in
     }
-    loadUsers();
   }, []);
 
   const loadUsers = async () => {
@@ -71,6 +70,12 @@ export default function UsersPage() {
     }
     setIsLoading(false);
   };
+  
+  useEffect(() => {
+      if (currentUserId !== null) {
+          loadUsers();
+      }
+  }, [currentUserId]);
 
   const handleDelete = async (id: number) => {
     if (id === currentUserId) {

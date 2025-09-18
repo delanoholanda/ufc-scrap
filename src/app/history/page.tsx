@@ -11,11 +11,12 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { Extraction, CSVFile, ExtractionStatus } from '@/lib/types';
-import { fetchExtractions, fetchExtractionDetails, deleteExtraction, reprocessExtraction } from '@/lib/history-actions';
-import { ArrowLeft, Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye, CheckCircle, XCircle, AlertTriangle, Terminal } from 'lucide-react';
+import { fetchExtractions, deleteExtraction, reprocessExtraction } from '@/lib/history-actions';
+import { Trash2, ChevronDown, History as HistoryIcon, AlertCircle, FileText, Download, RefreshCw, Loader2, Eye, CheckCircle, XCircle, AlertTriangle, Terminal } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +51,7 @@ export default function HistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [openAccordionItem, setOpenAccordionItem] = useState<string | null>(null);
   const [isReprocessing, setIsReprocessing] = useState<number | null>(null);
+  const [selectedExtractions, setSelectedExtractions] = useState<number[]>([]);
   const { toast } = useToast();
   const [userId, setUserId] = useState<number | null>(null);
 
@@ -62,30 +64,44 @@ export default function HistoryPage() {
     }
   }, []);
 
-  useEffect(() => {
-    async function loadExtractions() {
-      setIsLoading(true);
-      const result = await fetchExtractions();
-      if (result.success && result.data) {
-        // Fetch details for each extraction initially
-        const detailedExtractions = await Promise.all(result.data.map(async (ext) => {
-            const details = await fetchExtractionDetails(ext.id);
-            return { ...ext, files: details.files || [] };
-        }));
-        setExtractions(detailedExtractions);
-      } else {
+  const loadExtractions = async () => {
+    setIsLoading(true);
+    const result = await fetchExtractions();
+    if (result.success && result.data) {
+        setExtractions(result.data);
+    } else {
         toast({ variant: 'destructive', title: 'Erro', description: result.error });
-      }
-      setIsLoading(false);
     }
-    loadExtractions();
-  }, [toast]);
+    setIsLoading(false);
+  }
 
-  const handleDelete = async (id: number) => {
-    const result = await deleteExtraction(id);
+  useEffect(() => {
+    if (userId) {
+        loadExtractions();
+    }
+  }, [userId, toast]);
+
+  const handleSelectionChange = (id: number) => {
+    setSelectedExtractions(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAll = (checked: boolean | string) => {
+     if (checked) {
+      setSelectedExtractions(extractions.map(ext => ext.id));
+    } else {
+      setSelectedExtractions([]);
+    }
+  };
+
+
+  const handleDelete = async (ids: number[]) => {
+    const result = await deleteExtraction(ids);
     if (result.success) {
-        toast({ title: 'Sucesso', description: 'Extração excluída.' });
-        setExtractions(prev => prev.filter(ext => ext.id !== id));
+        toast({ title: 'Sucesso', description: 'Extração(ões) excluída(s).' });
+        setExtractions(prev => prev.filter(ext => !ids.includes(ext.id)));
+        setSelectedExtractions([]); // Limpar seleção após exclusão
     } else {
         toast({ variant: 'destructive', title: 'Erro', description: result.error });
     }
@@ -96,13 +112,11 @@ export default function HistoryPage() {
     const result = await reprocessExtraction(id);
     if (result.success && result.files) {
         toast({ title: 'Sucesso', description: 'Dados reprocessados e arquivos atualizados.' });
-        // Update the files for the specific extraction
         setExtractions(prev => prev.map(ext => 
             ext.id === id ? { ...ext, files: result.files, status: 'completed' } : ext
         ));
     } else {
         toast({ variant: 'destructive', title: 'Erro no Reprocessamento', description: result.error });
-        // Also update status to failed if reprocessing fails
         setExtractions(prev => prev.map(ext =>
             ext.id === id ? { ...ext, status: 'failed' } : ext
         ));
@@ -149,7 +163,7 @@ export default function HistoryPage() {
   return (
     <MainLayout onLogout={handleLogout} userId={userId}>
         <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
-            <header className="flex items-center justify-between">
+            <header className="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
                         <HistoryIcon />
@@ -157,6 +171,28 @@ export default function HistoryPage() {
                     </h1>
                     <p className="text-muted-foreground">Consulte, visualize ou exclua extrações de dados anteriores.</p>
                 </div>
+                {selectedExtractions.length > 0 && (
+                     <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button variant="destructive">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Excluir Selecionados ({selectedExtractions.length})
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                            <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                Esta ação não pode ser desfeita. Isso excluirá permanentemente os {selectedExtractions.length} itens selecionados.
+                            </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDelete(selectedExtractions)}>Continuar</AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
+                )}
             </header>
 
             {isLoading ? (
@@ -172,6 +208,20 @@ export default function HistoryPage() {
                 <p className="text-muted-foreground">Execute uma nova extração na tela principal para ver o histórico aqui.</p>
                 </div>
             ) : (
+                <>
+                <div className="flex items-center space-x-2 py-2">
+                    <Checkbox
+                        id="select-all"
+                        checked={selectedExtractions.length === extractions.length && extractions.length > 0}
+                        onCheckedChange={handleSelectAll}
+                    />
+                    <label
+                        htmlFor="select-all"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                        Selecionar Todos
+                    </label>
+                </div>
                 <Accordion type="single" collapsible className="w-full" value={openAccordionItem || undefined} onValueChange={setOpenAccordionItem}>
                 {extractions.map(ext => {
                     const statusInfo = statusConfig[ext.status] || statusConfig.failed;
@@ -179,56 +229,44 @@ export default function HistoryPage() {
                     return (
                     <AccordionItem value={`item-${ext.id}`} key={ext.id} className="border-b-0">
                     <Card className='mb-2 shadow-sm transition-all hover:shadow-md'>
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
-                            <div className='flex-grow'>
-                                <p className="font-semibold text-lg">Extração de {ext.year}.{ext.semester}</p>
-                                <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
-                            <Badge className={cn("text-white", statusInfo.className)}>
-                                    <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
-                                    {statusInfo.text}
-                                </Badge>
-                            <AccordionTrigger asChild>
-                                <Button variant="outline" size="sm" disabled={ext.status === 'running' || !ext.files || ext.files.length === 0}>
-                                    <ChevronDown className="mr-2 h-4 w-4" />
-                                    Arquivos
-                                </Button>
-                                </AccordionTrigger>
-                                <LogPreviewDialog extractionId={ext.id} />
-                                <Button 
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => handleReprocess(ext.id)} 
-                                    disabled={isReprocessing === ext.id || ext.status === 'running'}
-                                >
-                                    {isReprocessing === ext.id ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    ) : (
-                                    <RefreshCw className="mr-2 h-4 w-4" />
-                                    )}
-                                    Reprocessar
-                                </Button>
-                                <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button variant="destructive" size="sm" disabled={ext.status === 'running'}>
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Excluir
+                        <div className="flex items-start p-4 gap-4">
+                             <Checkbox
+                                id={`select-${ext.id}`}
+                                checked={selectedExtractions.includes(ext.id)}
+                                onCheckedChange={() => handleSelectionChange(ext.id)}
+                                className="mt-1"
+                            />
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between w-full gap-4">
+                                <div className='flex-grow'>
+                                    <p className="font-semibold text-lg">Extração de {ext.year}.{ext.semester}</p>
+                                    <p className="text-sm text-muted-foreground">Realizada em: {formatDate(ext.createdAt)}</p>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
+                                <Badge className={cn("text-white", statusInfo.className)}>
+                                        <Icon className={cn("mr-2 h-4 w-4", ext.status === 'running' && 'animate-spin')} />
+                                        {statusInfo.text}
+                                    </Badge>
+                                <AccordionTrigger asChild>
+                                    <Button variant="outline" size="sm" disabled={ext.status === 'running' || !ext.files || ext.files.length === 0}>
+                                        <ChevronDown className="mr-2 h-4 w-4" />
+                                        Arquivos
                                     </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                    <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        Esta ação não pode ser desfeita. Isso excluirá permanentemente os dados desta extração.
-                                    </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleDelete(ext.id)}>Continuar</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                                </AlertDialog>
+                                    </AccordionTrigger>
+                                    <LogPreviewDialog extractionId={ext.id} />
+                                    <Button 
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => handleReprocess(ext.id)} 
+                                        disabled={isReprocessing === ext.id || ext.status === 'running'}
+                                    >
+                                        {isReprocessing === ext.id ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                        <RefreshCw className="mr-2 h-4 w-4" />
+                                        )}
+                                        Reprocessar
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                         <AccordionContent>
@@ -259,6 +297,7 @@ export default function HistoryPage() {
                     )
                 })}
                 </Accordion>
+                </>
             )}
         </div>
     </MainLayout>

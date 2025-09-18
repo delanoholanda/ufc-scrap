@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import type { User, ExtractionStatus } from './types';
+import type { User, ExtractionStatus, Extraction, ScrapedDataRow } from './types';
 
 const DB_FILE_NAME = 'ufcScraper.db';
 const dataDirectory = path.join(process.cwd(), 'data');
@@ -192,6 +192,30 @@ export function saveLog(extractionId: number, logMessage: string): void {
     // Log to console, but don't crash the extraction if logging fails
     console.error(`[SAVE_LOG_ERROR] Failed to save log for extraction ${extractionId}:`, e);
   }
+}
+
+export function fetchLatestSuccessfulExtraction(year: string, semester: string): { extraction: Extraction | null, data: ScrapedDataRow[] | null } {
+    const db = getDB();
+    try {
+        const stmt = db.prepare(
+            `SELECT id, year, semester, status, createdAt FROM extractions 
+             WHERE year = ? AND semester = ? AND status = 'completed' 
+             ORDER BY createdAt DESC LIMIT 1`
+        );
+        const extraction = stmt.get(year, semester) as Extraction | undefined;
+
+        if (!extraction) {
+            return { extraction: null, data: null };
+        }
+        
+        const dataStmt = db.prepare('SELECT * FROM scraped_data WHERE extraction_id = ?');
+        const data = dataStmt.all(extraction.id) as ScrapedDataRow[];
+        
+        return { extraction, data };
+    } catch (e) {
+        console.error("Error fetching latest successful extraction:", e);
+        return { extraction: null, data: null };
+    }
 }
 
 
