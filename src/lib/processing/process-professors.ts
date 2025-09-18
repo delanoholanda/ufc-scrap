@@ -2,6 +2,10 @@
 import ldap, { SearchEntry } from 'ldapjs';
 
 async function searchLdapByFullName(client: ldap.Client, fullName: string): Promise<{ uid: string } | null> {
+    if (!fullName || fullName.trim() === '') {
+        console.log(`[PROFESSOR_LOOKUP_LDAP] Nome vazio fornecido, pulando busca.`);
+        return null;
+    }
     return new Promise((resolve, reject) => {
         const cleanedName = fullName.replace(/\s*\(\d+h\)/, '').trim();
         if (cleanedName.includes("A DEFINIR")) {
@@ -89,8 +93,9 @@ export async function processProfessors(data: any[]) {
         )).values());
         console.log(`[PROCESS_PROFESSORS] Encontrados ${uniqueProfessorsPerCourse.length} registros únicos de professor/disciplina para processar.`);
 
-        // 3. Enriquecer com CPF via LDAP
-        const professorsWithCpf = await Promise.all(uniqueProfessorsPerCourse.map(async (prof) => {
+        // 3. Enriquecer com CPF via LDAP (sequencialmente)
+        const professorsWithCpf = [];
+        for (const prof of uniqueProfessorsPerCourse) {
             let cpf: string | null = null;
             try {
                 const ldapResult = await searchLdapByFullName(ldapClient, prof.docente_individual);
@@ -99,10 +104,13 @@ export async function processProfessors(data: any[]) {
                 }
             } catch (error) {
                 console.error(`[PROCESS_PROFESSORS_ERROR] Erro na busca LDAP por professor ${prof.docente_individual}:`, error);
+                // Em caso de erro de conexão, pare para não sobrecarregar
+                throw error;
             }
             const cleanedName = prof.docente_individual.replace(/\s*\(\d+h\)/, '').trim();
-            return { ...prof, CPF: cpf || 'Não Encontrado', docente_individual: cleanedName };
-        }));
+            professorsWithCpf.push({ ...prof, CPF: cpf || 'Não Encontrado', docente_individual: cleanedName });
+        }
+
 
         // 4. Separar encontrados e não encontrados
         const foundProfessors = professorsWithCpf.filter(p => p.CPF !== 'Não Encontrado');

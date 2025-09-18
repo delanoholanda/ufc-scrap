@@ -292,7 +292,7 @@ export async function scrapeUFCData(
             }
         }
         
-        const isTestMode = true; // Set to false to run for all classes
+        const isTestMode = false; // Set to false to run for all classes
         if (isTestMode) {
             turmasParaProcessar = turmasParaProcessar.slice(0, 3);
             await addLog(`[MODO DE TESTE] Limitando a extração para ${turmasParaProcessar.length} turmas.`);

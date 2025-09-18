@@ -1,3 +1,4 @@
+
 'use server';
 import ldap, { Change, SearchEntry, SearchEntryObject } from 'ldapjs';
 
@@ -44,6 +45,10 @@ async function searchLdapByMatricula(client: ldap.Client, matricula: string): Pr
 }
 
 async function searchLdapByFullName(client: ldap.Client, fullName: string): Promise<any | null> {
+     if (!fullName || fullName.trim() === '') {
+        console.log(`[LDAP_SEARCH_NAME] Nome vazio fornecido, pulando busca.`);
+        return null;
+    }
      return new Promise((resolve, reject) => {
         const opts = {
             filter: `(nomecompleto=${fullName})`,
@@ -140,7 +145,8 @@ export async function processStudents(data: any[]) {
             });
         });
 
-        const studentsWithCpf: Student[] = await Promise.all(uniqueStudents.map(async (student) => {
+        const studentsWithCpf: Student[] = [];
+        for (const student of uniqueStudents) {
             let cpf = 'Não Encontrado';
             if (student.situacao === 'MATRICULADO') {
                 try {
@@ -150,12 +156,15 @@ export async function processStudents(data: any[]) {
                     }
                 } catch (error) {
                     console.error(`[PROCESS_STUDENTS_ERROR] Erro na busca LDAP por matrícula ${student.matricula}:`, error);
+                    // Em caso de erro de conexão, pare para não sobrecarregar
+                    throw error;
                 }
             } else {
                  console.log(`[PROCESS_STUDENTS] Aluno ${student.nome} (${student.matricula}) com situação "${student.situacao}", pulando busca LDAP.`);
             }
-            return { ...student, CPF: cpf };
-        }));
+            studentsWithCpf.push({ ...student, CPF: cpf });
+        }
+
 
         const notFoundStudentsData = studentsWithCpf.filter(s => s.CPF === 'Não Encontrado');
         let foundStudentsData = studentsWithCpf.filter(s => s.CPF !== 'Não Encontrado');
@@ -260,7 +269,7 @@ export async function processStudents(data: any[]) {
             finalStudents: [],
             notFoundStudents: uniqueStudents.map(s => ({ ...s, 'CPF': 'ERRO NO PROCESSAMENTO' })),
             toSwapStudents: [],
-postgresStudents: [],
+            postgresStudents: [],
         };
     } finally {
         ldapClient.unbind((err) => {
