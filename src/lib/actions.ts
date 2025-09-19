@@ -245,6 +245,20 @@ export async function scrapeUFCData(
             throw new Error("Referência ao elemento do vínculo é nula.");
         }
 
+        await addLog("Etapa 4.5.1: Verificando se há tela de aviso intermediária...");
+        const continueButtonSelector = 'input[value="Continuar >>"]';
+        try {
+            await page.waitForSelector(continueButtonSelector, { timeout: 3000 });
+            await addLog("Tela de aviso encontrada. Clicando em 'Continuar'.");
+            await Promise.all([
+                page.waitForNavigation(),
+                page.click(continueButtonSelector),
+            ]);
+            await addLog("Aviso passado. Acessando portal principal...");
+        } catch (error) {
+            await addLog("Nenhuma tela de aviso encontrada, continuando normalmente.");
+        }
+
 
         await addLog("Etapa 4.6: Entrando no módulo de Graduação...");
         await delay(1000);
@@ -384,7 +398,7 @@ export async function scrapeUFCData(
                 } else {
                      await addLog(`Turma ${turmaInfo.turma} não possui alunos matriculados.`);
                     scrapedData.push({
-                        ...turmaInfo, matricula: 'SEM ALUNO', nome: '***', curso: '***', tipoReserva: '***', situacao: '***'
+                        ...turmaInfo, matricula: 'SEM ALUNO', nome: '', curso: '***', tipoReserva: '***', situacao: '***'
                     });
                 }
 
