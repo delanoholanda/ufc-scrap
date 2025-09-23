@@ -44,3 +44,12 @@ export type ExtractionLog = {
     log_message: string;
     timestamp: string;
 }
+
+export type PostgresMatricula = {
+  id_matriculas: number;
+  matricula: number;
+  nome: string;
+  curso: string;
+  cadastrado: number;
+  uidnumber: number;
+};

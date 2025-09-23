@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
@@ -23,7 +24,7 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
       {
-        protocol: 'https',
+        protocol: 'https' ,
         hostname: 'images.seeklogo.com',
         port: '',
         pathname: '/**',
@@ -35,6 +36,11 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       }
     ],
+  },
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '4mb', // Increase body size limit for file processing
+    },
   },
 };
 

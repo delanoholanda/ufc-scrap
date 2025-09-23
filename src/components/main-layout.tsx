@@ -11,7 +11,7 @@ import {
   SidebarMenuButton,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { BookOpenCheck, History, Home, LogOut, Settings, User, Users } from "lucide-react";
+import { BookOpenCheck, History, Home, LogOut, Settings, User, Users, Database } from "lucide-react";
 import Link from "next/link";
 import SettingsDialog from "./settings-dialog";
 import { usePathname } from "next/navigation";
@@ -63,6 +63,14 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                    <SidebarMenuButton asChild tooltip="Matrículas PG" isActive={pathname.startsWith('/matriculas')}>
+                        <Link href="/matriculas">
+                            <Database />
+                            <span>Matrículas PG</span>
+                        </Link>
+                    </SidebarMenuButton>
+                </SidebarMenuItem>
             </SidebarMenu>
           </SidebarContent>
 
@@ -97,10 +105,8 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
         <div className="flex flex-col flex-1">
              <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b bg-background px-4 sm:static sm:h-auto sm:border-0 sm:bg-transparent sm:px-6 md:hidden">
                 <SidebarTrigger>
-                    <Button size="icon" variant="outline">
-                        <BookOpenCheck />
-                        <span className="sr-only">Toggle Menu</span>
-                    </Button>
+                    <BookOpenCheck />
+                    <span className="sr-only">Toggle Menu</span>
                 </SidebarTrigger>
                 <h1 className="font-semibold text-lg">UFC Data Scraper</h1>
              </header>

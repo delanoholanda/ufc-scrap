@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import type { User, ExtractionStatus, Extraction, ScrapedDataRow } from './types';
+import type { User, ExtractionStatus, Extraction, ScrapedDataRow, PostgresMatricula } from './types';
 
 const DB_FILE_NAME = 'ufcScraper.db';
 const dataDirectory = path.join(process.cwd(), 'data');
@@ -217,7 +217,6 @@ export function fetchLatestSuccessfulExtraction(year: string, semester: string):
         return { extraction: null, data: null };
     }
 }
-
 
 // Ensure the database is initialized on module load
 initializeDB();
