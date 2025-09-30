@@ -56,7 +56,7 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
                     </SidebarMenuButton>
                 </SidebarMenuItem>
                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild tooltip="Usuários" isActive={pathname.startsWith('/users')}>
+                    <SidebarMenuButton asChild tooltip="Gerenciar Usuários" isActive={pathname.startsWith('/users')}>
                         <Link href="/users">
                             <Users />
                             <span>Gerenciar Usuários</span>
@@ -68,6 +68,14 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
                         <Link href="/matriculas">
                             <Database />
                             <span>Matrículas PG</span>
+                        </Link>
+                    </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                    <SidebarMenuButton asChild tooltip="LDAP" isActive={pathname.startsWith('/ldap')}>
+                        <Link href="/ldap/alunos">
+                            <Users />
+                            <span>LDAP</span>
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>

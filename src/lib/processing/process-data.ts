@@ -28,8 +28,8 @@ export async function processData(
     const processedInput = scrapedData.map(row => {
         // Remove course suffix
         const courseName = row.curso.split(' -')[0];
-        // Create the 'shortname' used across different files
-        const courseShortName = `${row.codigo} - ${row.componente} - ${row.turma} - ${category}`;
+        // Create the 'shortname' used across different files, removing "Turma "
+        const courseShortName = `${row.codigo} - ${row.componente} - ${row.turma.replace('Turma ', '')} - ${category}`;
         
         return {
             ...row,

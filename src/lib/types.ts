@@ -53,3 +53,18 @@ export type PostgresMatricula = {
   cadastrado: number;
   uidnumber: number;
 };
+
+export type LdapUser = {
+  dn: string;
+  uid: string;
+  cn: string;
+  sn: string;
+  nomecompleto: string;
+  mail: string;
+  cargo?: string;
+  status?: string;
+  matricula?: string;
+  curso?: string;
+  siape?: string;
+  userPassword?: string;
+};
