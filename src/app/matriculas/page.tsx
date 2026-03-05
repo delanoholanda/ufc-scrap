@@ -1,7 +1,8 @@
+
 "use client";
 
-import { useState, useEffect, useMemo, useTransition } from 'react';
-import { useDebounce } from 'use-debounce';
+import { useState, useEffect, useCallback, useTransition } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,7 +65,9 @@ export default function MatriculasPage() {
   const currentPage = Number(searchParams.get('page')) || 1;
   const searchTerm = searchParams.get('search') || '';
   const itemsPerPage = Number(searchParams.get('perPage')) || 10;
-  const [debouncedSearchTerm] = useDebounce(searchTerm, 500);
+
+  // Estado local para o input de busca
+  const [searchInput, setSearchInput] = useState(searchTerm);
 
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const { toast } = useToast();
@@ -79,12 +82,17 @@ export default function MatriculasPage() {
     }
   }, []);
 
-  const loadMatriculas = () => {
+  // Sincroniza input local
+  useEffect(() => {
+    setSearchInput(searchTerm);
+  }, [searchTerm]);
+
+  const loadMatriculas = useCallback(() => {
     startTransition(async () => {
       const result = await fetchMatriculas({
         page: currentPage,
         perPage: itemsPerPage,
-        search: debouncedSearchTerm,
+        search: searchTerm,
       });
       if (result.success && result.matriculas) {
         setMatriculas(result.matriculas);
@@ -95,37 +103,46 @@ export default function MatriculasPage() {
         toast({ variant: 'destructive', title: 'Erro', description: result.error });
       }
     });
-  }
+  }, [currentPage, itemsPerPage, searchTerm, toast]);
 
   useEffect(() => {
     if (currentUserId !== null) {
       loadMatriculas();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, currentPage, debouncedSearchTerm, itemsPerPage]);
+  }, [currentUserId, loadMatriculas]);
   
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const params = new URLSearchParams(searchParams);
+  const debouncedUpdateUrl = useDebouncedCallback((value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
     params.set('page', '1');
-    params.set('search', e.target.value);
-    replace(`${pathname}?${params.toString()}`);
-  }
+    if (value) {
+        params.set('search', value);
+    } else {
+        params.delete('search');
+    }
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, 500);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    debouncedUpdateUrl(value);
+  };
   
   const handlePageChange = (page: number) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
     if (page > 0) {
       params.set('page', page.toString());
     } else {
       params.delete('page');
     }
-    replace(`${pathname}?${params.toString()}`);
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   const handlePerPageChange = (value: string) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
     params.set('page', '1');
     params.set('perPage', value);
-    replace(`${pathname}?${params.toString()}`);
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   const handleDelete = async (id: number) => {
@@ -233,8 +250,8 @@ export default function MatriculasPage() {
                   <Input
                     placeholder="Buscar por nome ou matrícula..."
                     className="pl-9"
-                    onChange={handleSearch}
-                    defaultValue={searchTerm}
+                    value={searchInput}
+                    onChange={handleSearchInputChange}
                   />
                 </div>
                  <div className="space-y-2">

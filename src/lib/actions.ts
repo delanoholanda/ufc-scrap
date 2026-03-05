@@ -1,6 +1,6 @@
 'use server';
 import type { ScrapedDataRow, CSVFile, Extraction } from '@/lib/types';
-import puppeteer, { type PuppeteerLaunchOptions, ElementHandle, Browser, Page } from 'puppeteer';
+import puppeteer, { type PuppeteerLaunchOptions, Browser, Page } from 'puppeteer';
 import { getDB, getExtractionStatus, fetchLatestSuccessfulExtraction } from './database';
 import { processData } from './processing/process-data';
 
@@ -81,19 +81,20 @@ async function saveProcessedFiles(extractionId: number, files: CSVFile[]) {
 function compareScrapedData(oldData: ScrapedDataRow[], newData: ScrapedDataRow[]): ScrapedDataRow[] {
     const oldDataMap = new Map<string, ScrapedDataRow>();
     oldData.forEach(row => {
-        const key = `${row.turma}-${row.matricula}`; // Unique key per student per class
+        const turmaRef = (row.turma || '').replace('Turma ', '').trim();
+        const key = `${turmaRef}-${(row.matricula || '').trim()}`;
         oldDataMap.set(key, row);
     });
 
     const newDataMap = new Map<string, ScrapedDataRow>();
     newData.forEach(row => {
-        const key = `${row.turma}-${row.matricula}`;
+        const turmaRef = (row.turma || '').replace('Turma ', '').trim();
+        const key = `${turmaRef}-${(row.matricula || '').trim()}`;
         newDataMap.set(key, row);
     });
 
     const differences: ScrapedDataRow[] = [];
 
-    // Check for additions and modifications
     newDataMap.forEach((newRow, key) => {
         const oldRow = oldDataMap.get(key);
         if (!oldRow || oldRow.situacao !== newRow.situacao) {
@@ -101,10 +102,8 @@ function compareScrapedData(oldData: ScrapedDataRow[], newData: ScrapedDataRow[]
         }
     });
 
-    // Check for removals
-    oldDataMap.forEach((oldRow, key) => {
+    oldMapCheck: oldDataMap.forEach((oldRow, key) => {
         if (!newDataMap.has(key)) {
-            // To represent a removal, we add the old row with a "REMOVED" status
             differences.push({ ...oldRow, situacao: 'REMOVIDO' });
         }
     });
@@ -144,354 +143,255 @@ export async function scrapeUFCData(
     
     await addLog(`Iniciando extração para ${year}/${semester}.`);
     
-    // Check for previous extraction
-    await addLog("Verificando extrações anteriores...");
-    const previousExtraction = await fetchLatestSuccessfulExtraction(year, semester);
-    if (previousExtraction.extraction && previousExtraction.data) {
-        await addLog(`Extração anterior encontrada (ID: ${previousExtraction.extraction.id}). Os dados serão comparados.`);
-    } else {
-        await addLog("Nenhuma extração bem-sucedida anterior encontrada. Uma extração completa será realizada.");
-    }
-    
     let extractionId: number;
     try {
         extractionId = await createExtractionEntry(year, semester);
-        await addLog(`Registro de extração criado com ID: ${extractionId}`);
-        await onIdCreated(extractionId); // Send ID to client immediately
+        await onIdCreated(extractionId);
     } catch (e: any) {
         await addError(e.message);
         return { success: false, error: e.message };
     }
 
-
-    if(visibleMode) {
-        await addLog("Modo visível ATIVADO. A janela do navegador será exibida.");
-    } else {
-        await addLog("Modo visível DESATIVADO. O processo será executado em segundo plano.");
-    }
-
     let browser: Browser | undefined;
     try {
         await addLog("Etapa 1: Configurando e lançando o navegador...");
-
         const isProduction = !!process.env.FIREBASE_APP_HOSTING_URL;
-
         const launchOptions: PuppeteerLaunchOptions = {
             headless: !visibleMode,
-            args: isProduction
-                ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                : [],
+            args: isProduction ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] : [],
         };
-
-        await addLog(`Ambiente de produção detectado: ${isProduction}.`);
-        await addLog(`Opções de lançamento: ${JSON.stringify(launchOptions)}`);
 
         browser = await puppeteer.launch(launchOptions);
         const page: Page = await browser.newPage();
-        await addLog("Navegador iniciado com sucesso.");
+        await page.setViewport({ width: 1280, height: 800 });
 
-        await addLog("Etapa 2: Navegando para a página de login do SIGAA...");
+        await addLog("Etapa 2: Navegando para o SIGAA...");
         await page.goto('https://si3.ufc.br/sigaa/verTelaLogin.do');
-        await addLog("Página de login carregada.");
-
-        await addLog("Etapa 3: Preenchendo credenciais...");
         await page.type('input[name="user.login"]', username);
         await page.type('input[name="user.senha"]', password);
-        await addLog("Credenciais preenchidas.");
-
-        await addLog("Etapa 4: Realizando login...");
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click('input[type="submit"]'),
-        ]);
+        await Promise.all([page.waitForNavigation(), page.click('input[type="submit"]')]);
 
         const loginErrorElement = await page.$('.error');
         if (loginErrorElement) {
             const errorMessage = await page.evaluate(el => el.textContent, loginErrorElement);
-            const errorMsg = `Falha no login: ${errorMessage?.trim()}`;
-            await addError(errorMsg);
-            throw new Error(errorMsg);
+            throw new Error(`Falha no login: ${errorMessage?.trim()}`);
         }
         await addLog("Login bem-sucedido!");
 
-        await addLog("Etapa 4.5: Selecionando o vínculo para acessar o portal...");
-        await page.waitForSelector("li:not(.disabled) a", { timeout: 10000 });
-        await addLog("Página de vínculos carregada. Procurando por 'Secretaria'.");
-
-        const vinculoElement = await page.evaluateHandle(() => {
-            const links = Array.from(document.querySelectorAll('li:not(.disabled) a'));
-            for (const link of links) {
-                const linkSpan = link.querySelector('span.col-xs-2');
-                if (linkSpan && linkSpan.textContent?.trim().toLowerCase() === 'secretaria') {
-                    return link;
+        await addLog(`Etapa 4.5: Selecionando o vínculo 'Secretaria'...`);
+        await page.waitForSelector("section.listagem ul li", { timeout: 15000 });
+        
+        const clickedSecretaria = await page.evaluate(() => {
+            const items = Array.from(document.querySelectorAll('section.listagem ul li:not(.disabled)'));
+            // Procura o item onde a segunda coluna (col-xs-2) contém exatamente "Secretaria"
+            const targetItem = items.find(li => {
+                const vinculoName = li.querySelector('span.col-xs-2')?.textContent?.trim().toUpperCase() || '';
+                return vinculoName === 'SECRETARIA';
+            });
+            
+            if (targetItem) {
+                const link = targetItem.querySelector('a');
+                if (link) {
+                    (link as HTMLElement).click();
+                    return true;
                 }
             }
-            return document.querySelector('li:not(.disabled) a');
+            return false;
         });
 
-        if (!vinculoElement || !(vinculoElement.asElement())) {
-            throw new Error("Não foi possível encontrar um vínculo de Secretaria ativo para clicar.");
+        if (!clickedSecretaria) {
+            throw new Error("Não foi possível encontrar o vínculo 'SECRETARIA' ativo.");
         }
+        await addLog("Vínculo de acesso selecionado.");
+        await page.waitForNavigation({ waitUntil: 'networkidle0' });
 
-        await addLog("Vínculo 'Secretaria' encontrado. Clicando...");
-        const link = vinculoElement.asElement() as ElementHandle<Element>;
-        if (link) {
-            await Promise.all([
-                page.waitForNavigation(),
-                link.click()
-            ]);
-            await addLog("Vínculo selecionado. Acessando portal principal...");
-        } else {
-            throw new Error("Referência ao elemento do vínculo é nula.");
-        }
-
-        await addLog("Etapa 4.5.1: Verificando se há tela de aviso intermediária...");
-        const continueButtonSelector = 'input[value="Continuar >>"]';
+        // Etapa de aviso intermediária (se houver)
         try {
-            await page.waitForSelector(continueButtonSelector, { timeout: 3000 });
-            await addLog("Tela de aviso encontrada. Clicando em 'Continuar'.");
-            await Promise.all([
-                page.waitForNavigation(),
-                page.click(continueButtonSelector),
-            ]);
-            await addLog("Aviso passado. Acessando portal principal...");
-        } catch (error) {
-            await addLog("Nenhuma tela de aviso encontrada, continuando normalmente.");
-        }
-
+            await page.waitForSelector('input[value="Continuar >>"]', { timeout: 3000 });
+            await Promise.all([page.waitForNavigation(), page.click('input[value="Continuar >>"]')]);
+            await addLog("Tela de aviso confirmada.");
+        } catch (e) {}
 
         await addLog("Etapa 4.6: Entrando no módulo de Graduação...");
-        await delay(1000);
-        const graduacaoSelector = 'a[href*="verMenuGraduacao.do"]';
-        await page.waitForSelector(graduacaoSelector, { timeout: 10000 });
-        await addLog("Módulo de graduação encontrado. Clicando...");
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click(graduacaoSelector),
-        ]);
+        await page.waitForSelector('a[href*="verMenuGraduacao.do"]', { timeout: 15000 });
+        await Promise.all([page.waitForNavigation(), page.click('a[href*="verMenuGraduacao.do"]')]);
         await addLog("Módulo de graduação acessado.");
 
-
         await addLog("Etapa 5: Navegando para a consulta de turmas...");
-        await page.waitForSelector('div#coordenacao.aba', { visible: true, timeout: 10000 });
-
-        const consultaLinkHandle = await page.evaluateHandle(() => {
+        await page.waitForSelector('div#coordenacao.aba', { visible: true, timeout: 15000 });
+        await page.evaluate(() => {
             const links = Array.from(document.querySelectorAll('div#coordenacao.aba a'));
-            return links.find(a => a.textContent?.trim() === "Consultar, Alterar, Consolidar e Remover Turma");
+            const target = links.find(a => a.textContent?.trim().includes("Consultar") && a.textContent?.trim().includes("Turma"));
+            if (target) (target as HTMLElement).click();
         });
-
-        if (!consultaLinkHandle || !consultaLinkHandle.asElement()) {
-            throw new Error("Não foi possível encontrar o link de 'Consultar, Alterar, Consolidar e Remover Turma'.");
-        }
-
-        const consultaLink = consultaLinkHandle.asElement() as ElementHandle<Element>;
-        await Promise.all([
-            page.waitForNavigation(),
-            consultaLink.click(),
-        ]);
+        await page.waitForNavigation();
         await addLog("Página de consulta carregada.");
 
         await addLog("Etapa 6: Preenchendo formulário de busca de turmas...");
-        await page.waitForSelector('table.formulario', { timeout: 30000 });
-
-        await page.click('input#form\\:checkNivel');
-        await addLog("Checkbox 'Nível' desmarcado.");
+        await page.waitForSelector('table.formulario', { timeout: 15000 });
+        const isNivelChecked = await page.$eval('input#form\\:checkNivel', el => (el as HTMLInputElement).checked).catch(() => false);
+        if (isNivelChecked) await page.click('input#form\\:checkNivel');
 
         await page.click('input[name="form:inputAno"]', { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type('input[name="form:inputAno"]', year);
-        await addLog(`Ano '${year}' preenchido.`);
-
         await page.click('input[name="form:inputPeriodo"]', { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type('input[name="form:inputPeriodo"]', semester);
-        await addLog(`Período '${semester}' preenchido.`);
-
-        await page.select('select[name="form:selectUnidade"]', '1020');
-        await addLog("Unidade 'CAMPUS DA UFC EM QUIXADÁ' selecionada.");
-
-        await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle0' }),
-            page.click('input[name="form:buttonBuscar"]'),
-        ]);
+        
+        await page.select('select[name="form:selectUnidade"]', '1020'); // CAMPUS QUIXADA
+        await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle0' }), page.click('input[name="form:buttonBuscar"]')]);
         await addLog("Busca de turmas realizada.");
 
-        await addLog("Etapa 7: Extraindo dados da tabela de turmas...");
-        await page.waitForSelector('#lista-turmas > tbody > tr', { timeout: 10000 });
+        await addLog("Etapa 7: Analisando tabela de turmas...");
+        const turmasInfo = await page.evaluate(() => {
+            const list: any[] = [];
+            let lastCodigo = '';
+            let lastComponente = '';
+            const rows = Array.from(document.querySelectorAll('#lista-turmas > tbody > tr'));
+            rows.forEach(row => {
+                if (row.classList.contains('destaque')) {
+                    const text = row.textContent?.trim() || '';
+                    const match = text.match(/(.*) - (.*)/);
+                    if (match) {
+                        lastCodigo = match[1].trim();
+                        lastComponente = match[2].split('(')[0].trim();
+                    }
+                } else if (row.classList.contains('linhaPar') || row.classList.contains('linhaImpar')) {
+                    const menuImg = row.querySelector('img[title="Visualizar Menu"]');
+                    if (menuImg) {
+                        const idMatch = menuImg.id.match(/exibir_(\d+)/);
+                        const id = idMatch ? idMatch[1] : null;
+                        const cells = row.querySelectorAll('td');
+                        if (id) {
+                            list.push({
+                                id,
+                                codigo: lastCodigo,
+                                componente: lastComponente,
+                                turma: cells[1]?.textContent?.trim() || '',
+                                docente: cells[2]?.textContent?.trim() || ''
+                            });
+                        }
+                    }
+                }
+            });
+            return list;
+        });
+
+        const totalToProcess = turmasInfo.length;
+        await addLog(`${totalToProcess} turmas identificadas.`);
 
         const scrapedData: ScrapedDataRow[] = [];
-        let currentComponenteInfo = { codigo: '', componente: '' };
 
-        const classRowsHandles = await page.$$('#lista-turmas > tbody > tr');
-        let turmasParaProcessar = [];
-
-        for (const row of classRowsHandles) {
-            const isHeader = await row.evaluate(el => el.classList.contains('destaque'));
-            const isVisible = await row.evaluate(el => (el as HTMLElement).style.display !== 'none');
-
-            if (isHeader) {
-                const headerText = await row.evaluate(el => el.textContent?.trim() || '');
-                const componenteMatch = headerText?.match(/(.*) - (.*)/);
-                currentComponenteInfo.codigo = componenteMatch?.[1] || '';
-                currentComponenteInfo.componente = componenteMatch?.[2].replace(/\s*\(.*\)\s*$/, '') || '';
-            } else if (isVisible) {
-                const idTurmaMatch = await row.evaluate(el => el.querySelector('img[onclick*="exibirOpcoesTurma"]')?.getAttribute('onclick')?.match(/(\d+)/));
-                const idTurma = idTurmaMatch ? idTurmaMatch[1] : null;
-
-                if (idTurma) {
-                     turmasParaProcessar.push({
-                        ...currentComponenteInfo,
-                        docente: await row.$eval('td:nth-child(3)', el => el.textContent?.trim() || 'A DEFINIR'),
-                        turma: await row.$eval('td:nth-child(2) > a', el => el.textContent?.trim() || ''),
-                        idTurma: idTurma
-                    });
-                }
+        for (let i = 0; i < totalToProcess; i++) {
+            const status = getExtractionStatus(extractionId);
+            if (status === 'cancelled') {
+                await updateExtractionStatus(extractionId, 'cancelled');
+                return { success: false, error: "Extração cancelada pelo usuário.", cancelled: true };
             }
-        }
-        
-        const isTestMode = false; // Set to false to run for all classes
-        if (isTestMode) {
-            turmasParaProcessar = turmasParaProcessar.slice(0, 3);
-            await addLog(`[MODO DE TESTE] Limitando a extração para ${turmasParaProcessar.length} turmas.`);
-        }
 
-        await addLog(`Encontradas ${turmasParaProcessar.length} turmas para processar. Iniciando extração de dados dos alunos...`);
-
-        for (let i = 0; i < turmasParaProcessar.length; i++) {
-             const status = getExtractionStatus(extractionId);
-             if (status === 'cancelled') {
-                 await addLog('Cancelamento detectado. Interrompendo a extração...');
-                 await updateExtractionStatus(extractionId, 'cancelled');
-                 return { success: false, error: "Extração cancelada pelo usuário.", cancelled: true };
-             }
-            
-            const turmaInfo = turmasParaProcessar[i];
-            await addLog(`(${i + 1}/${turmasParaProcessar.length}) Processando turma ${turmaInfo.turma} de ${turmaInfo.componente}...`);
+            const info = turmasInfo[i];
+            await addLog(`(${i + 1}/${totalToProcess}) Acessando turma ${info.turma} de ${info.codigo}...`);
 
             try {
-                await addLog(`Navegando para alunos da turma ID ${turmaInfo.idTurma} via JS.`);
-                await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                    page.evaluate((id) => {
-                        // @ts-ignore
-                        jsfcljs(document.forms['form'], 'form:j_id_jsp_1668842680_875,form:j_id_jsp_1668842680_875,id,' + id + ',turmasEAD,false', '');
-                    }, turmaInfo.idTurma)
-                ]);
+                // Abre o menu de opções
+                await page.click(`#exibir_${info.id}`);
+                await delay(800); // Aguarda a animação do menu
 
-                await addLog("Página de alunos carregada.");
-
-                await page.waitForSelector('table.listagem', { timeout: 10000 });
-                const studentRows = await page.$$('#lista-turmas-matriculas > tbody > tr');
-
-                if (studentRows.length > 0) {
-                    for (const studentRow of studentRows) {
-                        const cells = await studentRow.$$eval('td', tds => tds.map(td => (td as HTMLElement).innerText?.trim() || ''));
-                        scrapedData.push({
-                            ...turmaInfo,
-                            matricula: cells[0] || '',
-                            nome: cells[1] || '',
-                            curso: cells[2] || '',
-                            tipoReserva: cells[4] || '',
-                            situacao: cells[7] || '',
-                        });
+                // Clica em "Listar Alunos" dentro do menu que acabou de abrir
+                const clicked = await page.evaluate((id) => {
+                    const menuRow = document.querySelector(`#trOpcoesTurma${id}`);
+                    if (!menuRow) return false;
+                    const links = Array.from(menuRow.querySelectorAll('a'));
+                    const target = links.find(a => a.textContent?.trim().includes("Listar Alunos"));
+                    if (target) {
+                        (target as HTMLElement).click();
+                        return true;
                     }
+                    return false;
+                }, info.id);
+
+                if (!clicked) throw new Error("Link 'Listar Alunos' não encontrado no menu.");
+
+                await page.waitForNavigation({ waitUntil: 'networkidle0' });
+                await page.waitForSelector('#lista-turmas-matriculas', { timeout: 10000 });
+
+                // Extrai os dados dos alunos
+                const studentsFound = await page.evaluate((info) => {
+                    const rows = Array.from(document.querySelectorAll('#lista-turmas-matriculas tbody tr'));
+                    return rows.map(tr => {
+                        const tds = Array.from(tr.querySelectorAll('td')).map(td => td.innerText?.trim() || '');
+                        if (tds.length >= 8) {
+                            return {
+                                codigo: info.codigo,
+                                componente: info.componente,
+                                docente: info.docente,
+                                turma: info.turma,
+                                matricula: tds[0],
+                                nome: tds[1].split('\n')[0].trim(),
+                                curso: tds[2].trim(),
+                                tipoReserva: tds[4].trim(),
+                                situacao: tds[7].trim()
+                            };
+                        }
+                        return null;
+                    }).filter(s => s !== null);
+                }, info);
+
+                if (studentsFound.length > 0) {
+                    const s = studentsFound[0] as any;
+                    await addLog(`- ${studentsFound.length} alunos extraídos. Exemplo: ${s.nome} (${s.matricula})`);
                 } else {
-                     await addLog(`Turma ${turmaInfo.turma} não possui alunos matriculados.`);
-                    scrapedData.push({
-                        ...turmaInfo, matricula: 'SEM ALUNO', nome: '', curso: '***', tipoReserva: '***', situacao: '***'
-                    });
+                    await addLog(`- Nenhum aluno encontrado na tabela de discentes.`);
                 }
 
-                await addLog(`Extração da turma ${turmaInfo.turma} concluída. Voltando...`);
+                scrapedData.push(...(studentsFound as ScrapedDataRow[]));
+                
+                // Volta para a lista de turmas
                 await page.goBack({ waitUntil: 'networkidle0' });
-                await page.waitForSelector('#lista-turmas', { timeout: 10000 });
-                await addLog('Retornou à lista de turmas com sucesso.');
-
             } catch (e: any) {
-                await addError(`Erro ao processar alunos da turma ${turmaInfo.turma}: ${e.message}. Tentando voltar...`);
-                try {
-                    await page.goto('https://si3.ufc.br/sigaa/ensino/turma/busca_turma.jsf', { waitUntil: 'networkidle0' });
-                    await page.waitForSelector('#lista-turmas', { timeout: 10000 });
-                    await addLog('Recuperado com sucesso, retornou à lista de turmas.');
-                } catch (navError: any) {
-                    await addError(`Falha crítica ao tentar voltar para a lista de turmas. Abortando. Erro: ${navError.message}`);
-                    throw navError;
-                }
+                await addError(`Erro na turma ${info.turma}: ${e.message}`);
+                // Tenta recuperar navegando de volta para a busca caso se perca
+                await page.goto('https://si3.ufc.br/sigaa/ensino/turma/busca_turma.jsf', { waitUntil: 'networkidle0' }).catch(() => {});
             }
         }
 
         if (scrapedData.length > 0) {
-            await addLog("Etapa 8: Salvando dados brutos da nova extração no banco de dados...");
-            const saveResult = await saveData(extractionId, scrapedData);
-            if (!saveResult.success) {
-                throw new Error(saveResult.error || "Falha ao salvar dados brutos.");
-            }
-            await addLog("Dados brutos salvos com sucesso.");
-            
-            let dataToProcess = scrapedData;
+            await addLog(`Total de ${scrapedData.length} registros extraídos.`);
+            await addLog("Salvando dados brutos...");
+            await saveData(extractionId, scrapedData);
 
-            if (previousExtraction.data && previousExtraction.data.length > 0) {
-                await addLog("Comparando dados novos com a extração anterior...");
-                const differences = compareScrapedData(previousExtraction.data, scrapedData);
-                await addLog(`Comparação concluída. Encontradas ${differences.length} diferenças.`);
+            let dataToProcess = scrapedData;
+            const previous = await fetchLatestSuccessfulExtraction(year, semester);
+            
+            if (previous.extraction && previous.data && previous.data.length > 0) {
+                await addLog("Comparando com extração anterior...");
+                const differences = compareScrapedData(previous.data, scrapedData);
+                await addLog(`${differences.length} alterações detectadas.`);
                 if (differences.length === 0) {
                     await updateExtractionStatus(extractionId, 'completed');
-                    await addLog("Nenhuma alteração detectada desde a última extração bem-sucedida. Processo encerrado.");
                     return { success: true, noChanges: true };
                 }
                 dataToProcess = differences;
             }
 
-            await addLog(`Etapa 9: Processando ${dataToProcess.length} registros e gerando arquivos CSV...`);
-            const processResult = await processData(dataToProcess, `${year}.${semester}`);
-            
-            await addLog("Etapa 10: Salvando arquivos processados no banco de dados...");
-            const saveFilesResult = await saveProcessedFiles(extractionId, processResult);
-             if (!saveFilesResult.success) {
-                throw new Error(saveFilesResult.error);
-            }
-            await addLog("Arquivos processados salvos com sucesso.");
-
+            await addLog("Processando e gerando arquivos CSV...");
+            const files = await processData(dataToProcess, `${year}.${semester}`, addLog);
+            await addLog("Salvando arquivos finais...");
+            await saveProcessedFiles(extractionId, files);
         } else {
-            await addLog("Nenhum dado foi extraído. Processo encerrado.");
+            await addLog("Aviso: Nenhum aluno extraído de nenhuma turma.");
         }
         
         await updateExtractionStatus(extractionId, 'completed');
-        await addLog("Extração e processamento concluídos com sucesso.");
+        await addLog("Processo concluído com sucesso!");
         return { success: true, data: scrapedData };
 
-    } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : 'Um erro desconhecido ocorreu.';
-        const finalError = `Erro durante a automação: ${errorMessage}`;
-        await addError(finalError);
+    } catch (e: any) {
+        await addError(`Falha Crítica: ${e.message}`);
         await updateExtractionStatus(extractionId, 'failed');
-        return { success: false, error: finalError };
+        return { success: false, error: e.message };
     } finally {
-        if (browser) {
-            await addLog("Fechando o navegador...");
-            await browser.close();
-        }
+        if (browser) await browser.close();
     }
-}
-
-
-export async function processScrapedData(
-  data: ScrapedDataRow[],
-  year: string,
-  semester: string
-): Promise<{ success: boolean; files?: CSVFile[]; error?: string }> {
-  try {
-    if (!data || data.length === 0) {
-      return { success: false, error: 'Não há dados para processar.' };
-    }
-    
-    const category = `${year}.${semester}`;
-    const files = await processData(data, category);
-
-    return { success: true, files };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Um erro desconhecido ocorreu durante o processamento.';
-    console.error('[PROCESS_SCRAPED_DATA_ERROR]', errorMessage);
-    return { success: false, error: errorMessage };
-  }
 }

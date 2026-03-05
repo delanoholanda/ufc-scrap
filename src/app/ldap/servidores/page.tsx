@@ -1,7 +1,8 @@
+
 "use client";
 
-import { useState, useEffect, useTransition } from 'react';
-import { useDebounce } from 'use-debounce';
+import { useState, useEffect, useTransition, useCallback } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -54,14 +55,15 @@ export default function LdapServidoresPage() {
   
   const currentPage = Number(searchParams.get('page')) || 1;
   const searchTerm = searchParams.get('search') || '';
-  const searchField = searchParams.get('field') || 'uid';
+  const searchField = searchParams.get('field') || 'nomecompleto';
   const statusFilter = searchParams.get('status') || 'ativo';
   const itemsPerPage = Number(searchParams.get('perPage')) || 10;
-  const [debouncedSearchTerm] = useDebounce(searchTerm, 500);
+
+  // Estado local para o input de busca para evitar re-renders excessivos
+  const [searchInput, setSearchInput] = useState(searchTerm);
 
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const { toast } = useToast();
-  
 
   useEffect(() => {
     const sessionUserId = sessionStorage.getItem("userId");
@@ -72,16 +74,21 @@ export default function LdapServidoresPage() {
     }
   }, []);
 
-  const loadUsers = () => {
+  // Sincroniza o input local se a URL mudar externamente (ex: navegação)
+  useEffect(() => {
+    setSearchInput(searchTerm);
+  }, [searchTerm]);
+
+  const loadUsers = useCallback(() => {
     startTransition(async () => {
       try {
         const result = await fetchLdapUsers({
           page: currentPage,
           perPage: itemsPerPage,
           searchField: searchField,
-          searchValue: debouncedSearchTerm,
+          searchValue: searchTerm,
           status: statusFilter === 'todos' ? undefined : (statusFilter as 'ativo' | 'inativo'),
-          baseFilter: '(objectClass=servidorUFCQuixada)', // Filter for staff
+          baseFilter: '(objectClass=servidorUFCQuixada)',
         });
         if (result.success && result.users) {
           setUsers(result.users);
@@ -96,34 +103,43 @@ export default function LdapServidoresPage() {
           toast({ variant: 'destructive', title: 'Erro de Conexão', description: error });
       }
     });
-  }
+  }, [currentPage, itemsPerPage, searchField, searchTerm, statusFilter, toast]);
 
   useEffect(() => {
     if (currentUserId !== null) {
       loadUsers();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, currentPage, debouncedSearchTerm, searchField, itemsPerPage, statusFilter]);
+  }, [currentUserId, loadUsers]);
   
-  const handleUrlParamChange = (param: string, value: string) => {
-    const params = new URLSearchParams(searchParams);
-    params.set('page', '1'); // Reset page on filter change
+  const handleUrlParamChange = useCallback((param: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('page', '1');
     if (value) {
         params.set(param, value);
     } else {
         params.delete(param);
     }
-    replace(`${pathname}?${params.toString()}`);
-  }
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [pathname, replace, searchParams]);
+
+  const debouncedUpdateUrl = useDebouncedCallback((value: string) => {
+    handleUrlParamChange('search', value);
+  }, 500);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    debouncedUpdateUrl(value);
+  };
   
   const handlePageChange = (page: number) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
     if (page > 0) {
       params.set('page', page.toString());
     } else {
       params.delete('page');
     }
-    replace(`${pathname}?${params.toString()}`);
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   const handleLogout = () => {
@@ -175,6 +191,7 @@ export default function LdapServidoresPage() {
   };
 
   const searchPlaceholders: { [key: string]: string } = {
+    nomecompleto: 'Buscar por Nome (Smart)...',
     uid: 'Buscar por UID (CPF)...',
     siape: 'Buscar por SIAPE...',
     mail: 'Buscar por Email...',
@@ -202,7 +219,7 @@ export default function LdapServidoresPage() {
                         <Badge variant="secondary" className="whitespace-nowrap">Total: {total} Servidores</Badge>
                      )}
                 </div>
-                <p className="text-muted-foreground">Consulte, adicione, edite e remova usuários do diretório LDAP.</p>
+                <p className="text-muted-foreground">Consulte, adicione, edite e remova servidores do diretório LDAP.</p>
             </div>
              <nav className="flex items-center gap-2">
                 <Button asChild variant={pathname.endsWith('/alunos') ? 'default' : 'outline'}>
@@ -224,6 +241,7 @@ export default function LdapServidoresPage() {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                            <SelectItem value="nomecompleto">Nome Completo</SelectItem>
                             <SelectItem value="uid">UID (CPF)</SelectItem>
                             <SelectItem value="siape">SIAPE</SelectItem>
                             <SelectItem value="mail">Email</SelectItem>
@@ -237,8 +255,8 @@ export default function LdapServidoresPage() {
                     id="search-input"
                     placeholder={searchPlaceholders[searchField] || 'Buscar...'}
                     className="pl-9"
-                    onChange={(e) => handleUrlParamChange('search', e.target.value)}
-                    defaultValue={searchTerm}
+                    value={searchInput}
+                    onChange={handleSearchInputChange}
                   />
                 </div>
                  <div className="space-y-2">
@@ -280,10 +298,10 @@ export default function LdapServidoresPage() {
               </div>
             ) : users.length === 0 ? (
                <div className="text-center py-16">
-                  <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
+                  <Search className="mx-auto h-12 w-12 text-muted-foreground" />
                   <h3 className="mt-4 text-lg font-medium">Nenhum servidor encontrado</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Tente ajustar sua busca ou adicione um novo servidor.
+                    Tente ajustar sua busca ou mudar o filtro de status.
                   </p>
                 </div>
             ) : (
@@ -367,6 +385,3 @@ export default function LdapServidoresPage() {
     </MainLayout>
   );
 }
-
-    
-    

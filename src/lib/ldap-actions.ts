@@ -1,11 +1,24 @@
 
-
 'use server';
 
-import ldap, { Change, SearchEntry, Filter, AndFilter, EqualityFilter, SubstringFilter } from 'ldapjs';
+import ldap, { Change, SearchEntry, Filter, AndFilter, EqualityFilter } from 'ldapjs';
 import type { LdapUser } from './types';
 import crypto from 'crypto';
 
+/**
+ * Normaliza uma string: remove acentos, converte para maiúsculas e remove caracteres especiais.
+ * Usado para tornar a busca por nome resiliente a variações de escrita.
+ */
+function normalizeString(str: string): string {
+  if (!str) return '';
+  return str
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove acentos
+    .replace(/[^A-Z0-9\s]/g, ' ')   // Substitui caracteres especiais por espaço
+    .replace(/\s+/g, ' ')           // Remove espaços duplicados
+    .trim();
+}
 
 function getLdapClient(): ldap.Client {
   const requiredEnvVars = ['LDAP_SERVER', 'LDAP_PORT', 'LDAP_USERNAME', 'LDAP_PASSWORD'];
@@ -72,9 +85,9 @@ export async function fetchLdapUsers({
     
     const filterParts: Filter[] = [ldap.parseFilter(baseFilter)];
 
-    if (searchValue && searchField) {
-        let valueFilter: Filter;
-        valueFilter = new EqualityFilter({
+    // Filtros de ID, Matrícula, SIAPE ou Email são feitos via LDAP EqualityFilter
+    if (searchValue && searchField && searchField !== 'nomecompleto') {
+        let valueFilter = new EqualityFilter({
             attribute: searchField,
             value: searchValue,
         });
@@ -90,17 +103,16 @@ export async function fetchLdapUsers({
     }
 
     const finalFilter = new AndFilter({ filters: filterParts });
-    
     const baseDN = 'ou=people,dc=quixada,dc=ufc,dc=br';
 
-    // Etapa 1: Obter todos os DNs que correspondem ao filtro
+    // Etapa 1: Obter todas as entradas que correspondem ao filtro básico e status
     let allEntries = await new Promise<SearchEntry[]>((resolve, reject) => {
         const entries: SearchEntry[] = [];
         const searchOptions = {
           filter: finalFilter,
           scope: 'sub' as const,
           attributes: ['uid', 'cn', 'sn', 'nomecompleto', 'mail', 'cargo', 'status', 'matricula', 'curso', 'siape'],
-          sizeLimit: 0, // No limit
+          sizeLimit: 0,
           paged: true,
         };
 
@@ -118,7 +130,16 @@ export async function fetchLdapUsers({
         });
     });
     
-    // Ordenar os resultados em memória pela aplicação
+    // Etapa 2: Se a busca for por nomecompleto, filtramos em memória usando normalização
+    if (searchField === 'nomecompleto' && searchValue) {
+      const normalizedSearch = normalizeString(searchValue);
+      allEntries = allEntries.filter(entry => {
+        const nome = entry.pojo.attributes?.find(attr => attr.type === 'nomecompleto')?.values[0] || '';
+        return normalizeString(nome).includes(normalizedSearch);
+      });
+    }
+
+    // Etapa 3: Ordenar os resultados em memória pela aplicação
     allEntries.sort((a, b) => {
         const nameA = a.pojo.attributes?.find(attr => attr.type === 'nomecompleto')?.values[0] || '';
         const nameB = b.pojo.attributes?.find(attr => attr.type === 'nomecompleto')?.values[0] || '';
@@ -127,7 +148,7 @@ export async function fetchLdapUsers({
 
     const total = allEntries.length;
     
-    // Etapa 2: Obter a "fatia" para a página atual
+    // Etapa 4: Obter a "fatia" para a página atual
     const offset = (page - 1) * perPage;
     const entriesForPage = allEntries.slice(offset, offset + perPage);
 
@@ -135,7 +156,7 @@ export async function fetchLdapUsers({
         return { success: true, users: [], total: total };
     }
 
-    // Etapa 3: Mapear as entradas para o formato LdapUser
+    // Etapa 5: Mapear as entradas para o formato LdapUser
     const users = entriesForPage.map(entry => entryToLdapUser(entry));
     
     return { success: true, users, total };
@@ -143,9 +164,6 @@ export async function fetchLdapUsers({
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Falha ao buscar usuários LDAP.';
     console.error('[LDAP_FETCH_ERROR]', e);
-    if ((e as any).name === 'SizeLimitExceededError') {
-        return { success: false, error: 'O número de resultados excedeu o limite do servidor LDAP.' };
-    }
     return { success: false, error };
   } finally {
     if (client) {
@@ -221,7 +239,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>):
         if (attributes.nomecompleto && attributes.nomecompleto !== existingUser.nomecompleto) {
             const nameParts = attributes.nomecompleto.split(' ');
             const newCn = nameParts[0];
-            const newSn = nameParts.slice(1).join(' ') || newCn; // Ensure sn is not empty
+            const newSn = nameParts.slice(1).join(' ') || newCn; 
 
             changes.push(new Change({
                 operation: 'replace',
@@ -246,7 +264,6 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>):
 
         for (const key in attributes) {
             const attrKey = key as keyof LdapUser;
-            // Skip handled attributes
             if (attrKey === 'nomecompleto' || attrKey === 'userPassword') continue;
 
             if (attrKey in attributeMap) {
@@ -280,7 +297,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>):
         }
         
         if (changes.length === 0) {
-            return { success: true }; // No changes needed
+            return { success: true };
         }
 
         await new Promise<void>((resolve, reject) => {

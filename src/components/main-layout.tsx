@@ -11,7 +11,7 @@ import {
   SidebarMenuButton,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { BookOpenCheck, History, Home, LogOut, Settings, User, Users, Database } from "lucide-react";
+import { BookOpenCheck, History, Home, LogOut, Settings, User, Users, Database, Image as ImageIcon } from "lucide-react";
 import Link from "next/link";
 import SettingsDialog from "./settings-dialog";
 import { usePathname } from "next/navigation";
@@ -76,6 +76,14 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
                         <Link href="/ldap/alunos">
                             <Users />
                             <span>LDAP</span>
+                        </Link>
+                    </SidebarMenuButton>
+                </SidebarMenuItem>
+                 <SidebarMenuItem>
+                    <SidebarMenuButton asChild tooltip="Uploads" isActive={pathname.startsWith('/uploads')}>
+                        <Link href="/uploads">
+                            <ImageIcon />
+                            <span>Uploads</span>
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>

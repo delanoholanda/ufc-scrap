@@ -1,84 +1,75 @@
+'use server';
 
 import ldap, { SearchEntry } from 'ldapjs';
 
-async function searchLdapByFullName(client: ldap.Client, fullName: string): Promise<{ uid: string } | null> {
-    if (!fullName || fullName.trim() === '') {
-        console.log(`[PROFESSOR_LOOKUP_LDAP] Nome vazio fornecido, pulando busca.`);
-        return null;
-    }
+function normalizeString(str: string): string {
+    if (!str) return '';
+    return str
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+async function fetchAllProfessors(client: ldap.Client): Promise<Map<string, any>> {
     return new Promise((resolve, reject) => {
-        const cleanedName = fullName.replace(/\s*\(\d+h\)/, '').trim();
-        if (cleanedName.includes("A DEFINIR")) {
-            console.log(`[PROFESSOR_LOOKUP_LDAP] Professor "A DEFINIR", pulando busca.`);
-            return resolve(null);
-        }
-
+        const professorsMap = new Map<string, any>();
         const opts = {
-            filter: `(nomecompleto=${cleanedName})`,
+            filter: '(objectClass=servidorUFCQuixada)',
             scope: 'sub' as const,
-            attributes: ['uid']
+            attributes: ['uid', 'nomecompleto', 'siape'],
+            paged: {
+                pageSize: 200,
+                pagePause: false
+            },
+            sizeLimit: 0
         };
-        console.log(`[PROFESSOR_LOOKUP_LDAP] Buscando com filtro: ${opts.filter}`);
-        
-        client.search('ou=people,dc=quixada,dc=ufc,dc=br', opts, (err, res) => {
-            if (err) {
-                console.error(`[PROFESSOR_LOOKUP_LDAP] Erro ao iniciar busca para "${cleanedName}":`, err);
-                return reject(err);
-            }
 
-            let foundUser: { uid: string } | null = null;
-            let entryCount = 0;
+        client.search('ou=people,dc=quixada,dc=ufc,dc=br', opts, (err, res) => {
+            if (err) return reject(err);
 
             res.on('searchEntry', (entry: SearchEntry) => {
-                entryCount++;
-                const entryObject = entry.pojo;
-                if (entryObject.attributes && entryObject.attributes.length > 0) {
-                    const uidAttribute = entryObject.attributes.find(attr => attr.type === 'uid');
-                    if (uidAttribute && uidAttribute.values.length > 0) {
-                        foundUser = { uid: uidAttribute.values[0] };
-                        console.log(`[PROFESSOR_LOOKUP_LDAP] Entrada encontrada para "${cleanedName}": uid=${foundUser.uid}`);
-                    }
+                const pojo = entry.pojo;
+                const uid = pojo.attributes?.find(a => a.type === 'uid')?.values[0];
+                const nome = pojo.attributes?.find(a => a.type === 'nomecompleto')?.values[0];
+                const siape = pojo.attributes?.find(a => a.type === 'siape')?.values[0];
+                if (uid && nome) {
+                    professorsMap.set(normalizeString(nome), { uid: String(uid).trim(), siape: String(siape || '') });
                 }
             });
-            res.on('error', (ldapErr) => {
-                 console.error(`[PROFESSOR_LOOKUP_LDAP] Erro na busca para "${cleanedName}":`, ldapErr);
-                reject(ldapErr);
+            res.on('error', (err) => {
+                if (err.name === 'SizeLimitExceededError') {
+                    resolve(professorsMap);
+                } else {
+                    reject(err);
+                }
             });
-            res.on('end', () => {
-                 if (!foundUser) {
-                    console.log(`[PROFESSOR_LOOKUP_LDAP] Busca para "${cleanedName}" concluída. Nenhum usuário único encontrado.`);
-                 }
-                 // If more than one user is found, it's an ambiguous result.
-                 if (entryCount > 1) {
-                    console.log(`[PROFESSOR_LOOKUP_LDAP] Múltiplos resultados (${entryCount}) encontrados para "${cleanedName}". Retornando nulo para evitar inconsistências.`);
-                    resolve(null);
-                 } else {
-                    resolve(foundUser);
-                 }
-            });
+            res.on('end', () => resolve(professorsMap));
         });
     });
 }
 
-
-export async function processProfessors(data: any[]) {
-    console.log("[PROCESS_PROFESSORS] Iniciando processamento de professores...");
+export async function processProfessors(data: any[], logger: (m: string) => Promise<void>) {
+    await logger("[LDAP] Cruzando dados de professores com diretório...");
     
-    const ldapClient = ldap.createClient({ url: `ldap://${process.env.LDAP_SERVER}:${process.env.LDAP_PORT}` });
+    const ldapClient = ldap.createClient({ 
+        url: `ldap://${process.env.LDAP_SERVER}:${process.env.LDAP_PORT}`,
+        connectTimeout: 10000 
+    });
 
     try {
         await new Promise<void>((resolve, reject) => {
             ldapClient.bind(process.env.LDAP_USERNAME!, process.env.LDAP_PASSWORD!, (err) => {
-                if (err) {
-                    console.error("[LDAP_BIND_ERROR_PROFESSOR] Falha no bind com o servidor LDAP:", err);
-                    return reject(err);
-                }
-                console.log("[LDAP_BIND_PROFESSOR] Bind com servidor LDAP bem-sucedido.");
+                if (err) return reject(err);
                 resolve();
             });
         });
 
-        // 1. Expandir entradas de múltiplos professores
+        const ldapProfessorsMap = await fetchAllProfessors(ldapClient);
+        await logger(`[LDAP] ${ldapProfessorsMap.size} registros de servidores carregados.`);
+
         const expandedProfessorData: any[] = [];
         data.forEach(row => {
             const teachers = row.docente.split(/ e |, /).filter(Boolean);
@@ -87,32 +78,26 @@ export async function processProfessors(data: any[]) {
             });
         });
 
-        // 2. Obter professores únicos por disciplina
         const uniqueProfessorsPerCourse = Array.from(new Map(expandedProfessorData.map(item =>
             [`${item.docente_individual}-${item['Curso ShortName']}`, item]
         )).values());
-        console.log(`[PROCESS_PROFESSORS] Encontrados ${uniqueProfessorsPerCourse.length} registros únicos de professor/disciplina para processar.`);
 
-        // 3. Enriquecer com CPF via LDAP (sequencialmente)
-        const professorsWithCpf = [];
-        for (const prof of uniqueProfessorsPerCourse) {
-            let cpf: string | null = null;
-            try {
-                const ldapResult = await searchLdapByFullName(ldapClient, prof.docente_individual);
-                if (ldapResult) {
-                    cpf = ldapResult.uid;
-                }
-            } catch (error) {
-                console.error(`[PROCESS_PROFESSORS_ERROR] Erro na busca LDAP por professor ${prof.docente_individual}:`, error);
-                // Em caso de erro de conexão, pare para não sobrecarregar
-                throw error;
-            }
+        const professorsWithCpf = uniqueProfessorsPerCourse.map(prof => {
             const cleanedName = prof.docente_individual.replace(/\s*\(\d+h\)/, '').trim();
-            professorsWithCpf.push({ ...prof, CPF: cpf || 'Não Encontrado', docente_individual: cleanedName });
-        }
+            const normalizedScrapedName = normalizeString(cleanedName);
+            let cpf = 'Não Encontrado';
+            let siape = '';
+            
+            if (!cleanedName.includes("A DEFINIR")) {
+                const found = ldapProfessorsMap.get(normalizedScrapedName);
+                if (found) {
+                    cpf = found.uid;
+                    siape = found.siape;
+                }
+            }
+            return { ...prof, CPF: cpf, Siape: siape, docente_individual: cleanedName };
+        });
 
-
-        // 4. Separar encontrados e não encontrados
         const foundProfessors = professorsWithCpf.filter(p => p.CPF !== 'Não Encontrado');
         const notFoundProfessors = professorsWithCpf
             .filter(p => p.CPF === 'Não Encontrado')
@@ -122,10 +107,6 @@ export async function processProfessors(data: any[]) {
                 course1: p['Curso ShortName'],
             }));
         
-        console.log(`[PROCESS_PROFESSORS] Professores encontrados com CPF via LDAP: ${foundProfessors.length}`);
-        console.log(`[PROCESS_PROFESSORS] Professores não encontrados: ${notFoundProfessors.length}`);
-        
-        // 5. Formatar arquivo final de professores
         const finalProfessors = foundProfessors.map(p => {
             const nameParts = p.docente_individual.split(' ');
             return {
@@ -135,25 +116,19 @@ export async function processProfessors(data: any[]) {
                 email: 'zz',
                 role1: 'editingteacher',
                 course1: p['Curso ShortName'],
+                siape: p.Siape
             };
         });
         
         const uniqueFinalProfessors = Array.from(new Map(finalProfessors.map((item: any) => [item.username + item.course1, item])).values());
-        console.log(`[PROCESS_PROFESSORS] Total de matrículas de professores encontradas e prontas para o arquivo final: ${uniqueFinalProfessors.length}`);
+        await logger(`[LDAP] Professores identificados: ${uniqueFinalProfessors.length}`);
 
-        console.log("[PROCESS_PROFESSORS] Processamento de professores concluído.");
-        return {
-            finalProfessors: uniqueFinalProfessors,
-            notFoundProfessors,
-        };
+        return { finalProfessors: uniqueFinalProfessors, notFoundProfessors };
 
-    } catch(e) {
-        console.error("[PROCESS_PROFESSORS_FATAL] Um erro fatal ocorreu durante o processamento de professores:", e);
+    } catch(e: any) {
+        await logger(`[ERRO LDAP] Falha no processamento de professores: ${e.message}`);
         return { finalProfessors: [], notFoundProfessors: [] };
     } finally {
-        ldapClient.unbind((err) => {
-            if (err) console.error("[LDAP_UNBIND_ERROR_PROFESSOR] Erro ao desvincular do LDAP:", err);
-            else console.log("[LDAP_UNBIND_PROFESSOR] Desvinculado do servidor LDAP.");
-        });
+        ldapClient.unbind();
     }
 }

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Eye, Loader2, AlertCircle } from 'lucide-react';
 import type { CSVFile } from '@/lib/types';
@@ -38,7 +38,7 @@ export default function CSVPreviewDialog({ file }: CSVPreviewDialogProps) {
           }
           setIsLoading(false);
         },
-        error: (err) => {
+        error: (err: Error) => {
            setError(`Erro ao analisar o arquivo: ${err.message}`);
            setIsLoading(false);
         }
@@ -54,44 +54,52 @@ export default function CSVPreviewDialog({ file }: CSVPreviewDialogProps) {
           Visualizar
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-5xl">
+      <DialogContent className="max-w-[95vw] lg:max-w-6xl overflow-hidden flex flex-col h-[90vh]">
         <DialogHeader>
           <DialogTitle>Visualizando: {file.filename}</DialogTitle>
           <DialogDescription>
             Pré-visualização do conteúdo do arquivo CSV.
           </DialogDescription>
         </DialogHeader>
-        <div className="relative">
+        <div className="flex-1 relative overflow-hidden mt-4 rounded-md border bg-card">
           {isLoading ? (
-             <div className="flex items-center justify-center h-96">
+             <div className="flex items-center justify-center h-full">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="ml-4 text-muted-foreground">Analisando e carregando dados...</p>
              </div>
           ) : error ? (
-            <div className="flex flex-col items-center justify-center h-96 text-destructive">
+            <div className="flex flex-col items-center justify-center h-full text-destructive p-8 text-center">
                 <AlertCircle className="h-8 w-8 mb-2" />
                 <p>{error}</p>
             </div>
           ) : (
-            <ScrollArea className="h-[60vh] w-full rounded-md border">
-              <Table>
-                <TableHeader className="sticky top-0 bg-card z-10">
-                  <TableRow>
-                    {headers.map(header => (
-                      <TableHead key={header}>{header}</TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.map((row, rowIndex) => (
-                    <TableRow key={rowIndex}>
+            <ScrollArea className="h-full w-full">
+              <div className="w-max min-w-full">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-card z-20 shadow-sm">
+                    <TableRow className="hover:bg-transparent">
                       {headers.map(header => (
-                        <TableCell key={`${rowIndex}-${header}`}>{row[header]}</TableCell>
+                        <TableHead key={header} className="whitespace-nowrap px-4 py-3 font-bold text-foreground border-b text-center">
+                          {header}
+                        </TableHead>
                       ))}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {data.map((row, rowIndex) => (
+                      <TableRow key={rowIndex} className="hover:bg-muted/50">
+                        {headers.map(header => (
+                          <TableCell key={`${rowIndex}-${header}`} className="px-4 py-2 border-b border-r last:border-r-0 max-w-md truncate text-xs">
+                            {row[header]}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <ScrollBar orientation="horizontal" />
+              <ScrollBar orientation="vertical" />
             </ScrollArea>
           )}
         </div>

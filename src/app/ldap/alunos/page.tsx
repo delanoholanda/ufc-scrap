@@ -1,7 +1,8 @@
+
 "use client";
 
-import { useState, useEffect, useTransition } from 'react';
-import { useDebounce } from 'use-debounce';
+import { useState, useEffect, useTransition, useCallback } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -57,11 +58,12 @@ export default function LdapAlunosPage() {
   const searchField = searchParams.get('field') || 'uid';
   const statusFilter = searchParams.get('status') || 'ativo';
   const itemsPerPage = Number(searchParams.get('perPage')) || 10;
-  const [debouncedSearchTerm] = useDebounce(searchTerm, 500);
+
+  // Estado local para o input de busca para evitar re-renders excessivos
+  const [searchInput, setSearchInput] = useState(searchTerm);
 
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const { toast } = useToast();
-  
 
   useEffect(() => {
     const sessionUserId = sessionStorage.getItem("userId");
@@ -72,16 +74,21 @@ export default function LdapAlunosPage() {
     }
   }, []);
 
-  const loadUsers = () => {
+  // Sincroniza o input local se a URL mudar externamente (ex: navegação)
+  useEffect(() => {
+    setSearchInput(searchTerm);
+  }, [searchTerm]);
+
+  const loadUsers = useCallback(() => {
     startTransition(async () => {
       try {
         const result = await fetchLdapUsers({
             page: currentPage,
             perPage: itemsPerPage,
             searchField: searchField,
-            searchValue: debouncedSearchTerm,
+            searchValue: searchTerm,
             status: statusFilter === 'todos' ? undefined : (statusFilter as 'ativo' | 'inativo'),
-            baseFilter: '(objectClass=alunoUFCQuixada)', // Filter for students
+            baseFilter: '(objectClass=alunoUFCQuixada)',
         });
         if (result.success && result.users) {
             setUsers(result.users);
@@ -96,31 +103,40 @@ export default function LdapAlunosPage() {
           toast({ variant: 'destructive', title: 'Erro de Conexão', description: error });
       }
     });
-  }
+  }, [currentPage, itemsPerPage, searchField, searchTerm, statusFilter, toast]);
 
   useEffect(() => {
     if (currentUserId !== null) {
       loadUsers();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, currentPage, debouncedSearchTerm, searchField, itemsPerPage, statusFilter]);
+  }, [currentUserId, loadUsers]);
   
-  const handleUrlParamChange = (param: string, value: string) => {
-    const params = new URLSearchParams(searchParams);
-    params.set('page', '1'); // Reset page on filter change
+  const handleUrlParamChange = useCallback((param: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('page', '1');
     if (value) {
         params.set(param, value);
     } else {
         params.delete(param);
     }
-    replace(`${pathname}?${params.toString()}`);
-  }
+    replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [pathname, replace, searchParams]);
+
+  const debouncedUpdateUrl = useDebouncedCallback((value: string) => {
+    handleUrlParamChange('search', value);
+  }, 500);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    debouncedUpdateUrl(value);
+  };
 
   const handlePageChange = (page: number) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
     if (page > 0 && page !== currentPage) {
       params.set('page', page.toString());
-       replace(`${pathname}?${params.toString()}`);
+       replace(`${pathname}?${params.toString()}`, { scroll: false });
     }
   }
 
@@ -174,6 +190,7 @@ export default function LdapAlunosPage() {
 
   const searchPlaceholders: { [key: string]: string } = {
     uid: 'Buscar por UID (CPF)...',
+    nomecompleto: 'Buscar por Nome (Smart)...',
     matricula: 'Buscar por Matrícula...',
     mail: 'Buscar por Email...',
   };
@@ -200,7 +217,7 @@ export default function LdapAlunosPage() {
                         <Badge variant="secondary" className="whitespace-nowrap">Total: {total} Alunos</Badge>
                      )}
                  </div>
-                <p className="text-muted-foreground">Consulte, adicione, edite e remova usuários do diretório LDAP.</p>
+                <p className="text-muted-foreground">Consulte, adicione, edite e remova alunos do diretório LDAP.</p>
             </div>
              <nav className="flex items-center gap-2">
                 <Button asChild variant={pathname.endsWith('/alunos') ? 'default' : 'outline'}>
@@ -222,6 +239,7 @@ export default function LdapAlunosPage() {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                            <SelectItem value="nomecompleto">Nome Completo</SelectItem>
                             <SelectItem value="uid">UID (CPF)</SelectItem>
                             <SelectItem value="matricula">Matrícula</SelectItem>
                             <SelectItem value="mail">Email</SelectItem>
@@ -235,8 +253,8 @@ export default function LdapAlunosPage() {
                     id="search-input"
                     placeholder={searchPlaceholders[searchField] || 'Buscar...'}
                     className="pl-9"
-                    onChange={(e) => handleUrlParamChange('search', e.target.value)}
-                    defaultValue={searchTerm}
+                    value={searchInput}
+                    onChange={handleSearchInputChange}
                   />
                 </div>
                  <div className="space-y-2">
@@ -278,10 +296,10 @@ export default function LdapAlunosPage() {
               </div>
             ) : users.length === 0 ? (
                <div className="text-center py-16">
-                  <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
+                  <Search className="mx-auto h-12 w-12 text-muted-foreground" />
                   <h3 className="mt-4 text-lg font-medium">Nenhum aluno encontrado</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Tente ajustar sua busca ou adicione um novo aluno.
+                    Tente ajustar sua busca ou mudar o filtro de status.
                   </p>
                 </div>
             ) : (
@@ -365,6 +383,3 @@ export default function LdapAlunosPage() {
     </MainLayout>
   );
 }
-
-    
-    
