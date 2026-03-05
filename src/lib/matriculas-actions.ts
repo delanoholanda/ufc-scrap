@@ -76,15 +76,22 @@ export async function addMatricula(data: z.infer<typeof MatriculaSchema>) {
     
     const client = await pool.connect();
     try {
-        const existing = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [data.matricula]);
-        if (existing.rowCount && existing.rowCount > 0) {
+        // 1. Verificar se a matrícula já existe
+        const existingMatricula = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [data.matricula]);
+        if (existingMatricula.rowCount && existingMatricula.rowCount > 0) {
           return { success: false, error: `A matrícula ${data.matricula} já está cadastrada.` };
+        }
+
+        // 2. Verificar se o nome já existe (para evitar duplicados do mesmo aluno com matrículas diferentes)
+        const existingNome = await client.query('SELECT matricula FROM matriculas WHERE nome = $1', [data.nome.toUpperCase()]);
+        if (existingNome.rowCount && existingNome.rowCount > 0) {
+            return { success: false, error: `O aluno "${data.nome}" já possui um cadastro com a matrícula ${existingNome.rows[0].matricula}.` };
         }
         
         const uidnumber = await getNextUidNumber(client);
         
         const query = 'INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) VALUES ($1, $2, $3, $4, $5)';
-        await client.query(query, [data.matricula, data.nome, data.curso, data.cadastrado, uidnumber]);
+        await client.query(query, [data.matricula, data.nome.toUpperCase(), data.curso.toUpperCase(), data.cadastrado, uidnumber]);
         
         return { success: true, message: `Matrícula ${data.matricula} cadastrada com sucesso.` };
     } finally {
@@ -105,10 +112,33 @@ export async function updateMatricula(id: number, data: Partial<z.infer<typeof M
   let pool;
   try {
     pool = getPgPool();
-    const { matricula, nome, curso, cadastrado } = data;
-    const query = 'UPDATE matriculas SET matricula = $1, nome = $2, curso = $3, cadastrado = $4 WHERE id_matriculas = $5';
-    await pool.query(query, [matricula, nome?.toUpperCase(), curso?.toUpperCase(), cadastrado, id]);
-    return { success: true, message: 'Matrícula atualizada com sucesso.' };
+    const client = await pool.connect();
+    try {
+        const { matricula, nome, curso, cadastrado } = data;
+
+        // 1. Verificar se a nova matrícula já está em uso por outro registro
+        if (matricula) {
+            const existingMatricula = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1 AND id_matriculas != $2', [matricula, id]);
+            if (existingMatricula.rowCount && existingMatricula.rowCount > 0) {
+                return { success: false, error: `A matrícula ${matricula} já está em uso por outro aluno.` };
+            }
+        }
+
+        // 2. Verificar se o novo nome já existe em outro registro
+        if (nome) {
+            const existingNome = await client.query('SELECT matricula FROM matriculas WHERE nome = $1 AND id_matriculas != $2', [nome.toUpperCase(), id]);
+            if (existingNome.rowCount && existingNome.rowCount > 0) {
+                return { success: false, error: `Já existe outro cadastro para o aluno "${nome.toUpperCase()}" com a matrícula ${existingNome.rows[0].matricula}.` };
+            }
+        }
+
+        const query = 'UPDATE matriculas SET matricula = $1, nome = $2, curso = $3, cadastrado = $4 WHERE id_matriculas = $5';
+        await client.query(query, [matricula, nome?.toUpperCase(), curso?.toUpperCase(), cadastrado, id]);
+        
+        return { success: true, message: 'Matrícula atualizada com sucesso.' };
+    } finally {
+        client.release();
+    }
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Falha ao atualizar matrícula no PostgreSQL.';
     console.error('[POSTGRES_UPDATE_ERROR]', error);
@@ -148,8 +178,8 @@ export async function processMatriculasCsv(fileContent: string) {
         const client = await pool.connect();
 
         try {
-            const results = await new Promise<{ data: { 'Matrícula': string; 'Nome': string; 'Curso': string }[], errors: any[] }>((resolve, reject) => {
-                Papa.parse<{ 'Matrícula': string; 'Nome': string; 'Curso': string }>(fileContent, {
+            const results = await new Promise<{ data: any[], errors: any[] }>((resolve, reject) => {
+                Papa.parse(fileContent, {
                     header: true,
                     delimiter: ';',
                     skipEmptyLines: true,
@@ -165,17 +195,30 @@ export async function processMatriculasCsv(fileContent: string) {
             let latestUid = (await getNextUidNumber(client)) - 1;
 
             for (const row of results.data) {
-                const matriculaNum = parseInt(row['Matrícula'], 10);
-                if (isNaN(matriculaNum) || !row['Nome'] || !row['Curso']) {
+                const matriculaStr = row['Matrícula'] || row['matricula'];
+                const nomeStr = row['Nome'] || row['nome'];
+                const cursoStr = row['Curso'] || row['curso'];
+
+                const matriculaNum = parseInt(matriculaStr, 10);
+                if (isNaN(matriculaNum) || !nomeStr || !cursoStr) {
                     countFailed++;
-                    errors.push(`Linha inválida: ${JSON.stringify(row)}`);
+                    errors.push(`Linha inválida ou incompleta: ${JSON.stringify(row)}`);
                     continue;
                 }
 
-                const existing = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [matriculaNum]);
-                if (existing.rowCount && existing.rowCount > 0) {
+                // Verificar matrícula duplicada
+                const existingM = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [matriculaNum]);
+                if (existingM.rowCount && existingM.rowCount > 0) {
                     countFailed++;
                     errors.push(`Matrícula ${matriculaNum} já existe.`);
+                    continue;
+                }
+
+                // Verificar nome duplicado no CSV para evitar o que ocorreu no print
+                const existingN = await client.query('SELECT matricula FROM matriculas WHERE nome = $1', [nomeStr.toUpperCase()]);
+                if (existingN.rowCount && existingN.rowCount > 0) {
+                    countFailed++;
+                    errors.push(`O aluno "${nomeStr.toUpperCase()}" já está cadastrado com a matrícula ${existingN.rows[0].matricula}.`);
                     continue;
                 }
 
@@ -183,8 +226,8 @@ export async function processMatriculasCsv(fileContent: string) {
                 const insertQuery = 'INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) VALUES ($1, $2, $3, $4, $5)';
                 await client.query(insertQuery, [
                     matriculaNum,
-                    row['Nome'].toUpperCase(),
-                    row['Curso'].toUpperCase(),
+                    nomeStr.toUpperCase(),
+                    cursoStr.toUpperCase(),
                     0,
                     latestUid
                 ]);
@@ -193,7 +236,7 @@ export async function processMatriculasCsv(fileContent: string) {
 
             let finalMessage = `${countSuccess} matrículas adicionadas com sucesso.`;
             if (countFailed > 0) {
-                finalMessage += ` ${countFailed} falharam.`;
+                finalMessage += ` ${countFailed} registros ignorados por duplicidade ou erro.`;
             }
 
             return { success: true, message: finalMessage, errors };
