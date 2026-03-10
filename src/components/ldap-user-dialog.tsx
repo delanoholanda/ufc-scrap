@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -44,6 +45,7 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
       mail: '',
       status: '',
       matricula: '',
+      curso: '',
       cargo: '',
       userPassword: '',
   });
@@ -62,8 +64,9 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
                     mail: result.user.mail || '',
                     status: result.user.status || 'ativo',
                     matricula: result.user.matricula || '',
+                    curso: result.user.curso || '',
                     cargo: result.user.cargo || '',
-                    userPassword: '', // Always start with empty password
+                    userPassword: '', 
                 });
             } else {
                 throw new Error(result.error || "Usuário LDAP não encontrado.");
@@ -95,13 +98,59 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userDn) return;
+    if (!userDn || !user) return;
     setIsSaving(true);
     
-    // Don't send empty password field unless it's filled
-    const dataToUpdate: Partial<LdapUser> = { ...formData };
-    if (!formData.userPassword) {
-        delete dataToUpdate.userPassword;
+    // Filtra atributos baseados no tipo de usuário e envia apenas o que mudou
+    const dataToUpdate: any = {};
+    const original = user;
+
+    if (formData.nomecompleto !== (original.nomecompleto || '')) {
+        dataToUpdate.nomecompleto = formData.nomecompleto;
+        
+        // Sincroniza CN (Primeiro Nome) e SN (Sobrenome/Restante)
+        const nameParts = formData.nomecompleto.trim().split(/\s+/);
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || firstName;
+        
+        dataToUpdate.cn = firstName.toUpperCase();
+        dataToUpdate.sn = lastName.toUpperCase();
+    }
+    
+    if (formData.mail !== (original.mail || '')) {
+        dataToUpdate.mail = formData.mail;
+    }
+    
+    if (formData.status !== (original.status || 'ativo')) {
+        dataToUpdate.status = formData.status;
+    }
+    
+    if (formData.userPassword) {
+        dataToUpdate.userPassword = formData.userPassword;
+    }
+
+    // Campos específicos de Aluno
+    if (!!original.matricula || formData.matricula) {
+        if (formData.matricula !== (original.matricula || '')) {
+            dataToUpdate.matricula = formData.matricula;
+        }
+        if (formData.curso !== (original.curso || '')) {
+            dataToUpdate.curso = formData.curso;
+        }
+    }
+
+    // Campos específicos de Servidor
+    if (!!original.siape || !!original.cargo) {
+        if (formData.cargo !== (original.cargo || '')) {
+            dataToUpdate.cargo = formData.cargo;
+        }
+    }
+
+    if (Object.keys(dataToUpdate).length === 0) {
+        toast({ title: 'Informação', description: 'Nenhuma alteração detectada.' });
+        setIsSaving(false);
+        onOpenChange(false);
+        return;
     }
 
     const result = await updateLdapUser(userDn, dataToUpdate);
@@ -116,8 +165,8 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
     setIsSaving(false);
   };
 
-  const isAluno = user?.dn.includes('ou=alunos');
-  const isServidor = user?.dn.includes('ou=servidores');
+  const isAluno = !!user?.matricula;
+  const isServidor = !!user?.siape || (!user?.matricula && !!user?.cargo);
 
   const renderLoading = () => (
     <div className="space-y-4 pt-4">
@@ -149,58 +198,66 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
 
   const renderForm = () => (
      <form onSubmit={handleSave}>
-        <div className="space-y-4 pt-4">
-            <div className="space-y-2">
-                <Label htmlFor="uid">UID (CPF)</Label>
-                <Input id="uid" value={user?.uid || ''} disabled />
-                <p className='text-xs text-muted-foreground'>O UID (CPF) não pode ser alterado.</p>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="nomecompleto">Nome Completo</Label>
-                <Input id="nomecompleto" name="nomecompleto" value={formData.nomecompleto} onChange={handleChange} required />
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="mail">Email</Label>
-                <Input id="mail" name="mail" type="email" value={formData.mail} onChange={handleChange} required />
-            </div>
-
-            <div className="space-y-2 relative">
-                <Label htmlFor="userPassword">Nova Senha</Label>
-                <Input id="userPassword" name="userPassword" type={showPassword ? "text" : "password"} value={formData.userPassword} onChange={handleChange} placeholder="Deixe em branco para não alterar" />
-                <button
-                    type="button"
-                    className="absolute right-3 top-[2.4rem] text-muted-foreground"
-                    onClick={() => setShowPassword(!showPassword)}
-                    >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-            </div>
-
-            {isAluno && (
+        <div className="max-h-[60vh] overflow-y-auto px-1 pr-3">
+            <div className="space-y-4 pt-4">
                 <div className="space-y-2">
-                    <Label htmlFor="matricula">Matrícula</Label>
-                    <Input id="matricula" name="matricula" value={formData.matricula} onChange={handleChange} required />
+                    <Label htmlFor="uid">UID (CPF)</Label>
+                    <Input id="uid" value={user?.uid || ''} disabled className="bg-muted" />
+                    <p className='text-xs text-muted-foreground'>O UID (CPF) não pode ser alterado.</p>
                 </div>
-            )}
+                <div className="space-y-2">
+                    <Label htmlFor="nomecompleto">Nome Completo</Label>
+                    <Input id="nomecompleto" name="nomecompleto" value={formData.nomecompleto} onChange={handleChange} required />
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="mail">Email</Label>
+                    <Input id="mail" name="mail" type="email" value={formData.mail} onChange={handleChange} required />
+                </div>
 
-            {isServidor && (
+                <div className="space-y-2 relative">
+                    <Label htmlFor="userPassword">Nova Senha</Label>
+                    <Input id="userPassword" name="userPassword" type={showPassword ? "text" : "password"} value={formData.userPassword} onChange={handleChange} placeholder="Deixe em branco para não alterar" />
+                    <button
+                        type="button"
+                        className="absolute right-3 top-[2.4rem] text-muted-foreground"
+                        onClick={() => setShowPassword(!showPassword)}
+                        >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                </div>
+
+                {isAluno && (
+                    <>
                     <div className="space-y-2">
-                    <Label htmlFor="cargo">Cargo</Label>
-                    <Input id="cargo" name="cargo" value={formData.cargo} onChange={handleChange} />
-                </div>
-            )}
+                        <Label htmlFor="matricula">Matrícula</Label>
+                        <Input id="matricula" name="matricula" value={formData.matricula} onChange={handleChange} required />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="curso">Curso</Label>
+                        <Input id="curso" name="curso" value={formData.curso} onChange={handleChange} required />
+                    </div>
+                    </>
+                )}
 
-            <div className="space-y-2">
-                <Label htmlFor="status">Status</Label>
-                    <Select name="status" value={formData.status} onValueChange={(value) => handleSelectChange('status', value)} required>
-                    <SelectTrigger>
-                        <SelectValue placeholder="Selecione um status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="ativo">Ativo</SelectItem>
-                        <SelectItem value="inativo">Inativo</SelectItem>
-                    </SelectContent>
-                </Select>
+                {isServidor && (
+                    <div className="space-y-2">
+                        <Label htmlFor="cargo">Cargo</Label>
+                        <Input id="cargo" name="cargo" value={formData.cargo} onChange={handleChange} />
+                    </div>
+                )}
+
+                <div className="space-y-2">
+                    <Label htmlFor="status">Status</Label>
+                        <Select name="status" value={formData.status} onValueChange={(value) => handleSelectChange('status', value)} required>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Selecione um status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="ativo">Ativo</SelectItem>
+                            <SelectItem value="inativo">Inativo</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
             </div>
         </div>
 

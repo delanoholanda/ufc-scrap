@@ -1,3 +1,4 @@
+
 'use server';
 
 import ldap, { Change } from 'ldapjs';
@@ -6,7 +7,11 @@ import { checkAuth } from './auth-actions';
 
 function getLdapClient(): ldap.Client {
   const ldapUrl = `ldap://${process.env.LDAP_SERVER}:${process.env.LDAP_PORT}`;
-  return ldap.createClient({ url: ldapUrl, connectTimeout: 10000 });
+  return ldap.createClient({ 
+    url: ldapUrl, 
+    connectTimeout: 15000,
+    timeout: 15000 
+  });
 }
 
 export async function fetchLdapUsers(params: {
@@ -31,7 +36,6 @@ export async function fetchLdapUsers(params: {
 
     let filter = baseFilter;
     if (searchValue) {
-      // Usar busca exata para campos numéricos/identificadores para maior eficiência
       if (searchField === 'matricula' || searchField === 'uid' || searchField === 'siape') {
         filter = `(&${filter}(${searchField}=${searchValue}))`;
       } else {
@@ -42,7 +46,7 @@ export async function fetchLdapUsers(params: {
       filter = `(&${filter}(status=${status}))`;
     }
 
-    return new Promise((resolve) => {
+    const result = await new Promise<any>((resolve) => {
       const users: LdapUser[] = [];
       const opts: ldap.SearchOptions = {
         filter,
@@ -51,7 +55,7 @@ export async function fetchLdapUsers(params: {
           pageSize: 200,
           pagePause: false
         },
-        sizeLimit: 0, // 0 indica que confiamos no controle de paginação do servidor
+        sizeLimit: 0,
       };
 
       client.search('ou=people,dc=quixada,dc=ufc,dc=br', opts, (err, res) => {
@@ -68,12 +72,10 @@ export async function fetchLdapUsers(params: {
           const start = (page - 1) * perPage;
           const paginatedUsers = users.slice(start, start + perPage);
           resolve({ success: true, users: paginatedUsers, total });
-          client.unbind();
         });
 
         res.on('error', (err: any) => {
           if (err.name === 'SizeLimitExceededError') {
-             // Se o servidor ainda assim reclamar de tamanho, retornamos o que já foi coletado
              const total = users.length;
              const start = (page - 1) * perPage;
              const paginatedUsers = users.slice(start, start + perPage);
@@ -81,12 +83,15 @@ export async function fetchLdapUsers(params: {
           } else {
              resolve({ success: false, error: err.message });
           }
-          client.unbind();
         });
       });
     });
+
+    return result;
   } catch (error: any) {
     return { success: false, error: error.message };
+  } finally {
+    try { client.unbind(); } catch (e) {}
   }
 }
 
@@ -101,24 +106,43 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
       });
     });
 
-    const changes: Change[] = Object.entries(attributes).map(([key, value]) => {
+    // Filtra apenas atributos válidos e com valores definidos
+    const validEntries = Object.entries(attributes).filter(([key, value]) => {
+        return value !== undefined && value !== null && key !== 'dn' && key !== 'uid';
+    });
+
+    if (validEntries.length === 0) {
+        return { success: true };
+    }
+
+    // Criar as mudanças de forma mais explícita para evitar o erro "modification must be an Attribute"
+    const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',
-        modification: { [key]: value }
+        modification: {
+            type: key,
+            values: [String(value)]
+        }
       });
     });
 
     await new Promise<void>((resolve, reject) => {
       client.modify(dn, changes, (err) => {
-        if (err) reject(err); else resolve();
+        if (err) {
+            console.error('[LDAP_MODIFY_ERROR]', err);
+            reject(err);
+        } else {
+            resolve();
+        }
       });
     });
 
     return { success: true };
   } catch (error: any) {
+    console.error('[LDAP_UPDATE_CATCH]', error);
     return { success: false, error: error.message };
   } finally {
-    client.unbind();
+    try { client.unbind(); } catch (e) {}
   }
 }
 
@@ -137,7 +161,7 @@ export async function findLdapUserByDn(dn: string): Promise<{ success: boolean; 
       });
     });
 
-    return new Promise((resolve) => {
+    const result = await new Promise<any>((resolve) => {
       client.search(dn, { scope: 'base' as const }, (err, res) => {
         if (err) return resolve({ success: false, error: err.message });
         res.on('searchEntry', (entry) => {
@@ -148,9 +172,11 @@ export async function findLdapUserByDn(dn: string): Promise<{ success: boolean; 
         res.on('error', (err) => resolve({ success: false, error: err.message }));
       });
     });
+    
+    return result;
   } catch (error: any) {
     return { success: false, error: error.message };
   } finally {
-    client.unbind();
+    try { client.unbind(); } catch (e) {}
   }
 }
