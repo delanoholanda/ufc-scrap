@@ -2,255 +2,216 @@
 'use server';
 
 import { getPgPool } from './pg-pool';
-import type { PostgresMatricula } from './types';
+import { checkAuth } from './auth-actions';
 import { z } from 'zod';
 import Papa from 'papaparse';
-import type { PoolClient } from 'pg';
-
-async function getNextUidNumber(client: PoolClient): Promise<number> {
-    const result = await client.query('SELECT MAX(uidnumber) as max_uid FROM matriculas');
-    const maxUid = result.rows[0].max_uid || 0;
-    return maxUid + 1;
-}
 
 const MatriculaSchema = z.object({
-  matricula: z.number({ required_error: 'Matrícula é obrigatória.' }).int(),
-  nome: z.string({ required_error: 'Nome é obrigatório.' }).min(1, 'Nome é obrigatório.').toUpperCase(),
-  curso: z.string({ required_error: 'Curso é obrigatório.' }).min(1, 'Curso é obrigatório.').toUpperCase(),
-  cadastrado: z.number().int().min(0).optional().default(0),
+  matricula: z.number(),
+  nome: z.string(),
+  curso: z.string(),
+  cadastrado: z.number().optional().default(0),
 });
 
-export async function fetchMatriculas({ page, perPage, search }: { page: number, perPage: number, search?: string }) {
-  let pool;
+/**
+ * Busca o próximo UID Number disponível (Maior atual + 1)
+ */
+async function getNextUidNumber(pool: any): Promise<number> {
+    const res = await pool.query('SELECT MAX(uidnumber) as max_uid FROM matriculas');
+    const maxUid = parseInt(res.rows[0].max_uid, 10);
+    return isNaN(maxUid) ? 100000 : maxUid + 1;
+}
+
+export async function fetchMatriculas(params: { page: number; perPage: number; search?: string }) {
+  if (!(await checkAuth())) return { success: false, error: "Não autenticado." };
+
+  const { page, perPage, search } = params;
+  const offset = (page - 1) * perPage;
+  const pool = getPgPool();
+
   try {
-    pool = getPgPool();
-    const offset = (page - 1) * perPage;
-    const client = await pool.connect();
-    
-    try {
-        let whereClause = '';
-        const params: any[] = [];
-        
-        if (search) {
-          whereClause = 'WHERE nome ILIKE $1 OR matricula::text LIKE $1';
-          params.push(`%${search}%`);
-        }
-        
-        const countQuery = `SELECT COUNT(*) as count FROM matriculas ${whereClause}`;
-        const totalResult = await client.query(countQuery, params);
-        const total = parseInt(totalResult.rows[0].count, 10);
-        
-        const query = `
-          SELECT * FROM matriculas 
-          ${whereClause} 
-          ORDER BY id_matriculas DESC 
-          LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-        `;
-        params.push(perPage, offset);
-        
-        const matriculasResult = await client.query(query, params);
-        
-        return { success: true, matriculas: matriculasResult.rows, total };
-    } finally {
-        client.release();
+    let query = 'SELECT id_matriculas, matricula, nome, curso, cadastrado, uidnumber FROM matriculas';
+    let countQuery = 'SELECT COUNT(*) FROM matriculas';
+    const values: any[] = [];
+
+    if (search) {
+      const searchPattern = `%${search}%`;
+      query += ' WHERE nome ILIKE $1 OR CAST(matricula AS TEXT) ILIKE $1';
+      countQuery += ' WHERE nome ILIKE $1 OR CAST(matricula AS TEXT) ILIKE $1';
+      values.push(searchPattern);
     }
-  } catch (e) {
-    const error = e instanceof Error ? e.message : 'Falha ao buscar matrículas no PostgreSQL.';
-    console.error('[POSTGRES_FETCH_ERROR]', error);
-    return { success: false, error };
-  } finally {
-      if (pool) {
-          await pool.end();
-      }
+
+    query += ` ORDER BY id_matriculas DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`;
+    const result = await pool.query(query, [...values, perPage, offset]);
+    const countResult = await pool.query(countQuery, values);
+
+    return {
+      success: true,
+      matriculas: result.rows,
+      total: parseInt(countResult.rows[0].count, 10),
+    };
+  } catch (error: any) {
+    console.error('[FETCH_MATRICULAS_ERROR]', error.message);
+    return { success: false, error: 'Falha ao buscar matrículas no PostgreSQL.' };
   }
 }
 
 export async function addMatricula(data: z.infer<typeof MatriculaSchema>) {
-  let pool;
-  try {
-    pool = getPgPool();
-    const validation = MatriculaSchema.safeParse(data);
-    if (!validation.success) {
-      return { success: false, error: validation.error.errors.map(e => e.message).join(', ') };
-    }
-    
-    const client = await pool.connect();
-    try {
-        // 1. Verificar se a matrícula já existe
-        const existingMatricula = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [data.matricula]);
-        if (existingMatricula.rowCount && existingMatricula.rowCount > 0) {
-          return { success: false, error: `A matrícula ${data.matricula} já está cadastrada.` };
-        }
+  if (!(await checkAuth())) return { success: false, error: "Não autenticado." };
 
-        // 2. Verificar se o nome já existe (para evitar duplicados do mesmo aluno com matrículas diferentes)
-        const existingNome = await client.query('SELECT matricula FROM matriculas WHERE nome = $1', [data.nome.toUpperCase()]);
-        if (existingNome.rowCount && existingNome.rowCount > 0) {
-            return { success: false, error: `O aluno "${data.nome}" já possui um cadastro com a matrícula ${existingNome.rows[0].matricula}.` };
-        }
-        
-        const uidnumber = await getNextUidNumber(client);
-        
-        const query = 'INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) VALUES ($1, $2, $3, $4, $5)';
-        await client.query(query, [data.matricula, data.nome.toUpperCase(), data.curso.toUpperCase(), data.cadastrado, uidnumber]);
-        
-        return { success: true, message: `Matrícula ${data.matricula} cadastrada com sucesso.` };
-    } finally {
-        client.release();
+  const pool = getPgPool();
+  try {
+    const check = await pool.query(
+      'SELECT id_matriculas FROM matriculas WHERE matricula = $1',
+      [data.matricula]
+    );
+
+    if (check.rows.length > 0) {
+      return { success: false, error: 'Já existe um aluno cadastrado com esta matrícula.' };
     }
-  } catch (e) {
-    const error = e instanceof Error ? e.message : 'Falha ao adicionar matrícula no PostgreSQL.';
-     console.error('[POSTGRES_ADD_ERROR]', error);
-    return { success: false, error };
-  } finally {
-      if (pool) {
-          await pool.end();
-      }
+
+    const nextUid = await getNextUidNumber(pool);
+
+    await pool.query(
+      'INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) VALUES ($1, $2, $3, $4, $5)',
+      [data.matricula, data.nome, data.curso, data.cadastrado, nextUid]
+    );
+    return { success: true, message: 'Matrícula adicionada com sucesso.' };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 }
 
-export async function updateMatricula(id: number, data: Partial<z.infer<typeof MatriculaSchema>>) {
-  let pool;
+export async function updateMatricula(id: number, data: any) {
+  if (!(await checkAuth())) return { success: false, error: "Não autenticado." };
+
+  const pool = getPgPool();
   try {
-    pool = getPgPool();
-    const client = await pool.connect();
-    try {
-        const { matricula, nome, curso, cadastrado } = data;
+    const check = await pool.query(
+      'SELECT id_matriculas FROM matriculas WHERE matricula = $1 AND id_matriculas != $2',
+      [data.matricula, id]
+    );
 
-        // 1. Verificar se a nova matrícula já está em uso por outro registro
-        if (matricula) {
-            const existingMatricula = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1 AND id_matriculas != $2', [matricula, id]);
-            if (existingMatricula.rowCount && existingMatricula.rowCount > 0) {
-                return { success: false, error: `A matrícula ${matricula} já está em uso por outro aluno.` };
-            }
-        }
-
-        // 2. Verificar se o novo nome já existe em outro registro
-        if (nome) {
-            const existingNome = await client.query('SELECT matricula FROM matriculas WHERE nome = $1 AND id_matriculas != $2', [nome.toUpperCase(), id]);
-            if (existingNome.rowCount && existingNome.rowCount > 0) {
-                return { success: false, error: `Já existe outro cadastro para o aluno "${nome.toUpperCase()}" com a matrícula ${existingNome.rows[0].matricula}.` };
-            }
-        }
-
-        const query = 'UPDATE matriculas SET matricula = $1, nome = $2, curso = $3, cadastrado = $4 WHERE id_matriculas = $5';
-        await client.query(query, [matricula, nome?.toUpperCase(), curso?.toUpperCase(), cadastrado, id]);
-        
-        return { success: true, message: 'Matrícula atualizada com sucesso.' };
-    } finally {
-        client.release();
+    if (check.rows.length > 0) {
+      return { success: false, error: 'Outro aluno já utiliza esta matrícula.' };
     }
-  } catch (e) {
-    const error = e instanceof Error ? e.message : 'Falha ao atualizar matrícula no PostgreSQL.';
-    console.error('[POSTGRES_UPDATE_ERROR]', error);
-    return { success: false, error };
-  } finally {
-      if (pool) {
-          await pool.end();
-      }
+
+    await pool.query(
+      'UPDATE matriculas SET matricula = $1, nome = $2, curso = $3, cadastrado = $4 WHERE id_matriculas = $5',
+      [data.matricula, data.nome, data.curso, data.cadastrado, id]
+    );
+    return { success: true, message: 'Matrícula atualizada com sucesso.' };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 }
 
 export async function deleteMatricula(id: number) {
-  let pool;
+  if (!(await checkAuth())) return { success: false, error: "Não autenticado." };
+
+  const pool = getPgPool();
   try {
-    pool = getPgPool();
     await pool.query('DELETE FROM matriculas WHERE id_matriculas = $1', [id]);
-    return { success: true, message: 'Matrícula excluída com sucesso.' };
-  } catch (e) {
-    const error = e instanceof Error ? e.message : 'Falha ao excluir matrícula no PostgreSQL.';
-    console.error('[POSTGRES_DELETE_ERROR]', error);
-    return { success: false, error };
-  } finally {
-      if (pool) {
-          await pool.end();
-      }
+    return { success: true, message: 'Matrícula excluída.' };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 }
 
-export async function processMatriculasCsv(fileContent: string) {
-    let countSuccess = 0;
-    let countFailed = 0;
-    const errors: string[] = [];
-    let pool;
+export async function processMatriculasCsv(csvContent: string) {
+  if (!(await checkAuth())) return { success: false, error: "Não autenticado." };
 
-    try {
-        pool = getPgPool();
-        const client = await pool.connect();
+  const results = Papa.parse(csvContent, {
+    header: true,
+    skipEmptyLines: true,
+    delimiter: ';',
+  });
 
+  const pool = getPgPool();
+  let successCount = 0;
+  const errors: string[] = [];
+
+  try {
+      let currentMaxUid = await getNextUidNumber(pool);
+
+      for (const row of (results.data as any[])) {
         try {
-            const results = await new Promise<{ data: any[], errors: any[] }>((resolve, reject) => {
-                Papa.parse(fileContent, {
-                    header: true,
-                    delimiter: ';',
-                    skipEmptyLines: true,
-                    complete: resolve,
-                    error: reject
-                });
-            });
+          const matricula = parseInt(row['Matrícula'] || row.Matricula || row.matricula, 10);
+          const nome = row.Nome || row.nome;
+          const curso = row.Curso || row.curso;
 
-            if (results.errors.length > 0) {
-                return { success: false, message: `Erro ao processar o arquivo CSV: ${results.errors[0].message}`, errors: [] };
-            }
+          if (isNaN(matricula) || !nome) continue;
+          
+          const check = await pool.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [matricula]);
 
-            let latestUid = (await getNextUidNumber(client)) - 1;
-
-            for (const row of results.data) {
-                const matriculaStr = row['Matrícula'] || row['matricula'];
-                const nomeStr = row['Nome'] || row['nome'];
-                const cursoStr = row['Curso'] || row['curso'];
-
-                const matriculaNum = parseInt(matriculaStr, 10);
-                if (isNaN(matriculaNum) || !nomeStr || !cursoStr) {
-                    countFailed++;
-                    errors.push(`Linha inválida ou incompleta: ${JSON.stringify(row)}`);
-                    continue;
-                }
-
-                // Verificar matrícula duplicada
-                const existingM = await client.query('SELECT id_matriculas FROM matriculas WHERE matricula = $1', [matriculaNum]);
-                if (existingM.rowCount && existingM.rowCount > 0) {
-                    countFailed++;
-                    errors.push(`Matrícula ${matriculaNum} já existe.`);
-                    continue;
-                }
-
-                // Verificar nome duplicado no CSV para evitar o que ocorreu no print
-                const existingN = await client.query('SELECT matricula FROM matriculas WHERE nome = $1', [nomeStr.toUpperCase()]);
-                if (existingN.rowCount && existingN.rowCount > 0) {
-                    countFailed++;
-                    errors.push(`O aluno "${nomeStr.toUpperCase()}" já está cadastrado com a matrícula ${existingN.rows[0].matricula}.`);
-                    continue;
-                }
-
-                latestUid++;
-                const insertQuery = 'INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) VALUES ($1, $2, $3, $4, $5)';
-                await client.query(insertQuery, [
-                    matriculaNum,
-                    nomeStr.toUpperCase(),
-                    cursoStr.toUpperCase(),
-                    0,
-                    latestUid
-                ]);
-                countSuccess++;
-            }
-
-            let finalMessage = `${countSuccess} matrículas adicionadas com sucesso.`;
-            if (countFailed > 0) {
-                finalMessage += ` ${countFailed} registros ignorados por duplicidade ou erro.`;
-            }
-
-            return { success: true, message: finalMessage, errors };
-
-        } finally {
-            client.release();
+          if (check.rows.length === 0) {
+              await pool.query(
+                `INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) 
+                 VALUES ($1, $2, $3, 0, $4)`,
+                [matricula, nome, curso, currentMaxUid]
+              );
+              currentMaxUid++;
+          } else {
+              await pool.query(
+                `UPDATE matriculas SET nome = $1, curso = $2 WHERE matricula = $3`,
+                [nome, curso, matricula]
+              );
+          }
+          successCount++;
+        } catch (e: any) {
+          errors.push(`Erro na linha ${successCount + errors.length + 1}: ${e.message}`);
         }
-    } catch (e) {
-        const error = e instanceof Error ? e.message : 'Um erro inesperado ocorreu durante o processamento do CSV.';
-        console.error('[POSTGRES_CSV_ERROR]', error);
-        return { success: false, message: error, errors: [] };
-    } finally {
-        if (pool) {
-            await pool.end();
+      }
+  } catch (e: any) {
+      return { success: false, message: 'Erro ao processar arquivo.', error: e.message };
+  }
+
+  return {
+    success: true,
+    message: `${successCount} registros processados com sucesso.`,
+    errors,
+  };
+}
+
+export async function syncStudentsToPostgres(students: any[]) {
+    const pool = getPgPool();
+    let count = 0;
+    try {
+        // Obter o ponto de partida para novos UIDs
+        const res = await pool.query('SELECT MAX(uidnumber) as max_uid FROM matriculas');
+        let currentMaxUid = parseInt(res.rows[0].max_uid, 10);
+        if (isNaN(currentMaxUid)) currentMaxUid = 100000;
+
+        for (const s of students) {
+            const matricula = parseInt(s.matricula || s['Matrícula'], 10);
+            const nome = s.nome || s.Nome;
+            const curso = s.curso || s.Curso;
+
+            if (isNaN(matricula) || !nome) continue;
+            
+            // Verificar se o aluno já existe
+            const check = await pool.query('SELECT uidnumber FROM matriculas WHERE matricula = $1', [matricula]);
+            
+            if (check.rows.length === 0) {
+                // Aluno NOVO: Incrementa o maior UID e salva
+                currentMaxUid++;
+                await pool.query(
+                    `INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) 
+                     VALUES ($1, $2, $3, 0, $4)`,
+                    [matricula, nome, curso, currentMaxUid]
+                );
+                count++;
+            } else {
+                // Aluno EXISTENTE: Apenas atualiza dados básicos
+                await pool.query(
+                    `UPDATE matriculas SET nome = $1, curso = $2 WHERE matricula = $3`,
+                    [nome, curso, matricula]
+                );
+            }
         }
+        return { success: true, message: `${count} alunos novos cadastrados no PostgreSQL.` };
+    } catch (e: any) {
+        console.error("[SYNC_POSTGRES_ERROR]", e.message);
+        return { success: false, error: e.message, message: 'Erro ao sincronizar com Postgres.' };
     }
 }

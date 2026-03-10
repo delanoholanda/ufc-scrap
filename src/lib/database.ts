@@ -80,16 +80,12 @@ function initializeDB(): Database.Database {
     );
   `);
 
-  console.log('[DB] Schema initialized.');
-
   // Migration: Add status column to extractions if it doesn't exist
   try {
     const columns = db.pragma('table_info(extractions)') as { name: string }[];
     const statusColumn = columns.some((col) => col.name === 'status');
     if (!statusColumn) {
-        console.log('[DB_MIGRATION] Coluna "status" não encontrada na tabela "extractions". Adicionando...');
         db.prepare("ALTER TABLE extractions ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
-        console.log('[DB_MIGRATION] Coluna "status" adicionada com sucesso.');
     }
   } catch(e) {
     console.error('[DB_MIGRATION_ERROR] Falha ao verificar/adicionar a coluna status:', e);
@@ -101,20 +97,19 @@ function initializeDB(): Database.Database {
   const userCount = userResult ? userResult.count : 0;
 
   if (userCount === 0) {
-    console.log('[DB] No users found. Seeding default "ntic" user...');
     const { salt, hash } = hashPassword('TroqueNTIC!@');
     db.prepare('INSERT INTO users (name, username, email, salt, hash) VALUES (?, ?, ?, ?, ?)')
       .run('Usuário Padrão', 'ntic', 'ntic@quixada.ufc.br', salt, hash);
-    console.log('[DB] Default user "ntic" created.');
   }
   
   // Reset any 'running' extractions from a previous server crash
   try {
-    db.prepare("UPDATE extractions SET status = 'failed' WHERE status = 'running'").run();
-    console.log('[DB] Marked previously running extractions as failed.');
+    const result = db.prepare("UPDATE extractions SET status = 'failed' WHERE status = 'running'").run();
+    if (result.changes > 0) {
+        console.log(`[DB] Limpeza concluída: ${result.changes} extrações travadas foram marcadas como falhas.`);
+    }
   } catch(e) {
     // This might fail if the table/column doesn't exist yet on first run, which is fine.
-    console.warn('[DB] Could not reset running extractions, might be the first run.', e);
   }
 
 

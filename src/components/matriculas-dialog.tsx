@@ -51,6 +51,7 @@ const cursoOptions = [
     "Redes de Computadores",
     "Engenharia de Software",
     "Engenharia de Computação",
+    "Inteligência Artificial",
     "Design Digital",
     "Ciência da Computação",
     "Mestrado em Computação",

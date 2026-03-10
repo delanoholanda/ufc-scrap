@@ -2,6 +2,9 @@
 'use server';
 import ldap, { SearchEntry } from 'ldapjs';
 
+/**
+ * Normaliza strings para comparação
+ */
 function normalizeString(str: string): string {
     if (!str) return '';
     return str
@@ -14,110 +17,75 @@ function normalizeString(str: string): string {
 }
 
 /**
- * Busca no LDAP apenas os alunos cujas matrículas ou nomes foram extraídos.
- * Isso evita o erro de "Size Limit Exceeded".
+ * Escapa caracteres especiais para filtros LDAP
  */
-async function fetchSpecificStudents(client: ldap.Client, uniqueStudents: Student[], logger: (m: string) => Promise<void>): Promise<{ 
+function escapeLdapFilter(str: string): string {
+    return str.replace(/\\/g, '\\5c')
+              .replace(/\*/g, '\\2a')
+              .replace(/\(/g, '\\28')
+              .replace(/\)/g, '\\29')
+              .replace(/\0/g, '\\00');
+}
+
+/**
+ * Busca alunos específicos no diretório LDAP
+ */
+async function fetchSpecificStudents(client: ldap.Client, uniqueStudents: any[]): Promise<{ 
     matriculaMap: Map<string, string>, 
     nameMap: Map<string, any> 
 }> {
     const matriculaMap = new Map<string, string>();
     const nameMap = new Map<string, any>();
 
-    // Filtramos apenas matrículas válidas
     const matriculas = uniqueStudents.map(s => String(s.matricula).trim()).filter(m => m && m !== 'SEM ALUNO');
     const nomes = uniqueStudents.map(s => s.nome.trim()).filter(n => n);
 
     if (matriculas.length === 0) return { matriculaMap, nameMap };
 
-    // Criamos um filtro OR gigante para buscar todos de uma vez
-    // Ex: (|(matricula=123)(matricula=456)(nomecompleto=JOAO...))
-    // Nota: Dividimos em lotes de 50 para evitar filtros excessivamente longos
-    const batchSize = 50;
+    const batchSize = 30;
     for (let i = 0; i < matriculas.length; i += batchSize) {
         const batchMatriculas = matriculas.slice(i, i + batchSize);
         const batchNomes = nomes.slice(i, i + batchSize);
 
-        const matriculaFilter = batchMatriculas.map(m => `(matricula=${m})`).join('');
-        // Para nomes, usamos wildcard básico caso haja acentos no servidor
-        const nameFilter = batchNomes.map(n => `(nomecompleto=${n})`).join('');
+        const matriculaFilter = batchMatriculas.map(m => `(matricula=${escapeLdapFilter(m)})`).join('');
+        const nameFilter = batchNomes.map(n => `(nomecompleto=${escapeLdapFilter(n)})`).join('');
         
         const finalFilter = `(&(objectClass=alunoUFCQuixada)(|${matriculaFilter}${nameFilter}))`;
 
-        await new Promise<void>((resolve, reject) => {
-            const opts = {
-                filter: finalFilter,
-                scope: 'sub' as const,
-                attributes: ['uid', 'matricula', 'nomecompleto', 'curso', 'semestre', 'siape'],
-                sizeLimit: 0
-            };
-
-            client.search('ou=people,dc=quixada,dc=ufc,dc=br', opts, (err, res) => {
-                if (err) return reject(err);
-
+        await new Promise<void>((resolve) => {
+            client.search('ou=people,dc=quixada,dc=ufc,dc=br', { filter: finalFilter, scope: 'sub' as const }, (err, res) => {
+                if (err) { resolve(); return; }
                 res.on('searchEntry', (entry: SearchEntry) => {
-                    const pojo = entry.pojo;
-                    const attributes: any = {};
-                    pojo.attributes?.forEach(attr => {
-                        attributes[attr.type] = attr.values[0];
-                    });
+                    const attrs: any = {};
+                    entry.pojo.attributes.forEach(attr => { attrs[attr.type] = attr.values[0]; });
                     
-                    const uid = attributes.uid;
-                    const matricula = attributes.matricula;
-                    const nome = attributes.nomecompleto;
-
-                    if (uid && matricula) {
-                        matriculaMap.set(String(matricula).trim(), String(uid).trim());
+                    if (attrs.uid && attrs.matricula) {
+                        matriculaMap.set(String(attrs.matricula).trim(), String(attrs.uid).trim());
                     }
-                    if (uid && nome) {
-                        nameMap.set(normalizeString(nome), { dn: entry.dn.toString(), attributes });
+                    if (attrs.uid && attrs.nomecompleto) {
+                        nameMap.set(normalizeString(attrs.nomecompleto), { dn: entry.dn.toString(), attributes: attrs });
                     }
                 });
-                res.on('error', (err) => {
-                    logger(`[AVISO LDAP] Erro durante busca específica: ${err.message}`);
-                    resolve(); // Continua mesmo com erro em um lote
-                });
+                res.on('error', () => resolve());
                 res.on('end', () => resolve());
             });
         });
     }
-
     return { matriculaMap, nameMap };
 }
 
-async function modifyLdapEntry(client: ldap.Client, dn: string, changes: any): Promise<boolean> {
-     return new Promise((resolve) => {
-        client.modify(dn, changes, (err) => {
-            if (err) {
-                console.error(`[LDAP_MODIFY_ERROR] Falha ao modificar DN ${dn}:`, err);
-                return resolve(false);
-            }
-            resolve(true);
-        });
-    });
-}
-
-interface Student {
-    matricula: string;
-    nome: string;
-    curso: string;
-    situacao: string;
-    tipoReserva: string;
-    'Curso ShortName': string;
-    CPF?: string;
-}
-
+/**
+ * Processa a lista de alunos extraídos, cruzando com o LDAP.
+ */
 export async function processStudents(data: any[], logger: (m: string) => Promise<void>) {
     await logger("[LDAP] Cruzando dados de alunos com diretório...");
     
-    const uniqueStudents: Student[] = Array.from(new Map(data.map(item => [String(item['matricula']).trim(), item])).values())
-      .filter((s: Student) => s.matricula && s.matricula !== 'SEM ALUNO');
+    const uniqueStudents = Array.from(new Map(data.map(item => [String(item.matricula).trim(), item])).values())
+      .filter((s: any) => s.matricula && s.matricula !== 'SEM ALUNO');
     
-    await logger(`[LDAP] ${uniqueStudents.length} alunos únicos identificados nos dados extraídos.`);
-
     const ldapClient = ldap.createClient({ 
         url: `ldap://${process.env.LDAP_SERVER}:${process.env.LDAP_PORT}`,
-        connectTimeout: 10000
+        connectTimeout: 10000 
     });
     
     try {
@@ -128,118 +96,68 @@ export async function processStudents(data: any[], logger: (m: string) => Promis
             });
         });
 
-        // BUSCA CIRÚRGICA: Apenas os alunos extraídos
-        const { matriculaMap, nameMap } = await fetchSpecificStudents(ldapClient, uniqueStudents, logger);
-        await logger(`[LDAP] Busca finalizada. Encontrados no diretório: ${matriculaMap.size} via matrícula, ${nameMap.size} via nome.`);
+        const { matriculaMap, nameMap } = await fetchSpecificStudents(ldapClient, uniqueStudents);
 
-        const studentsWithCpf: Student[] = [];
-        const notFoundStudentsData: Student[] = [];
-
-        // 1. Cruzamento por Matrícula
-        for (const student of uniqueStudents) {
-            let cpf = matriculaMap.get(String(student.matricula).trim());
-            if (cpf) {
-                studentsWithCpf.push({ ...student, CPF: cpf });
-            } else {
-                notFoundStudentsData.push(student);
-            }
-        }
-        await logger(`[LDAP] Cruzamento inicial: ${studentsWithCpf.length} encontrados por matrícula.`);
-
-        // 2. Cruzamento por Nome (Swap/Troca de Matrícula)
+        const studentsWithCpf: any[] = [];
+        const notFoundStudents: any[] = [];
         const toSwapStudents: any[] = [];
-        const stillNotFound: Student[] = [];
+        const postgresStudents: any[] = [];
 
-        for (const student of notFoundStudentsData) {
-            const normalizedName = normalizeString(student.nome);
-            const ldapResult = nameMap.get(normalizedName);
+        for (const student of uniqueStudents) {
+            const m = String(student.matricula).trim();
+            const cpfFoundByMatricula = matriculaMap.get(m);
+            const ldapEntryByName = nameMap.get(normalizeString(student.nome));
 
-            if (ldapResult) {
-                const newMatriculaStr = String(student.matricula).trim();
-                const oldMatriculaStr = String(ldapResult.attributes.matricula).trim();
-
+            if (cpfFoundByMatricula) {
+                // Caso 1: Encontrado por matrícula
+                studentsWithCpf.push({ ...student, CPF: cpfFoundByMatricula });
+            } else if (ldapEntryByName) {
+                // Caso 2: Encontrado por nome (Troca de matrícula)
                 const swapInfo = {
-                    'Matrícula': student.matricula,
-                    'Nome': student.nome,
-                    'Curso': student.curso,
-                    'Tipo de Reserva': student.tipoReserva,
-                    'CPF': ldapResult.attributes.uid,
-                    'MatriculaAntiga': ldapResult.attributes.matricula,
-                    'CursoAntigo': ldapResult.attributes.curso,
-                    'Semestre': ldapResult.attributes.semestre || 'nan',
-                    'Siape': ldapResult.attributes.siape || 'nan',
+                    matricula: student.matricula,
+                    nome: student.nome,
+                    curso: student.curso,
+                    tipoReserva: student.tipoReserva || '',
+                    cpf: ldapEntryByName.attributes.uid,
+                    matriculaAntiga: ldapEntryByName.attributes.matricula,
+                    cursoAntigo: ldapEntryByName.attributes.curso
                 };
                 toSwapStudents.push(swapInfo);
-
-                // Tenta atualizar a matrícula no LDAP se for diferente
-                if (newMatriculaStr !== oldMatriculaStr) {
-                    try {
-                        const change = new ldap.Change({
-                            operation: 'replace',
-                            modification: { matricula: newMatriculaStr, curso: student.curso }
-                        });
-                        await modifyLdapEntry(ldapClient, ldapResult.dn, change);
-                    } catch (e) {}
-                }
-                studentsWithCpf.push({ ...student, CPF: ldapResult.attributes.uid });
+                studentsWithCpf.push({ ...student, CPF: ldapEntryByName.attributes.uid });
             } else {
-                stillNotFound.push(student);
+                // Caso 3: Aluno novo
+                notFoundStudents.push({ 
+                    matricula: student.matricula, 
+                    nome: student.nome, 
+                    curso: student.curso, 
+                    tipoReserva: student.tipoReserva || '', 
+                    cpf: 'Não Encontrado' 
+                });
+                
+                postgresStudents.push({ 
+                    matricula: student.matricula, 
+                    nome: student.nome, 
+                    curso: student.curso 
+                });
             }
         }
-        
-        if (toSwapStudents.length > 0) {
-            await logger(`[LDAP] Swap: ${toSwapStudents.length} alunos localizados por nome.`);
-        }
 
-        const finalNotFoundStudents = stillNotFound.map(s => ({
-            'Matrícula': s.matricula,
-            'Nome': s.nome,
-            'Curso': s.curso,
-            'Tipo de Reserva': s.tipoReserva,
-            'CPF': 'Não Encontrado',
-        }));
+        const studentCpfMap = new Map(studentsWithCpf.map(s => [String(s.matricula).trim(), s.CPF]));
+        const finalStudents = data.filter(r => studentCpfMap.has(String(r.matricula).trim())).map(r => {
+            const parts = r.nome.split(' ');
+            return {
+                username: studentCpfMap.get(String(r.matricula).trim()),
+                firstname: parts[0],
+                lastname: parts.slice(1).join(' '),
+                email: 'zz',
+                role1: 'student',
+                course1: r['Curso ShortName']
+            };
+        });
 
-        const postgresStudents = finalNotFoundStudents.map(s => ({
-            'Matrícula': s['Matrícula'],
-            'Nome': s['Nome'],
-            'Curso': s['Curso'],
-        }));
+        await logger(`[LDAP] Sincronização: ${finalStudents.length} vinculados, ${toSwapStudents.length} trocas, ${postgresStudents.length} novos.`);
 
-        const studentCpfMap = new Map(studentsWithCpf.map(s => [String(s.matricula).trim(), s.CPF!]));
-        const finalStudents = data
-            .filter((row: any) => studentCpfMap.has(String(row.matricula).trim()))
-            .map((row: any) => {
-                const nameParts = row.nome.split(' ');
-                return {
-                    username: studentCpfMap.get(String(row.matricula).trim()),
-                    firstname: nameParts[0],
-                    lastname: nameParts.slice(1).join(' '),
-                    email: 'zz',
-                    role1: 'student',
-                    course1: row['Curso ShortName'],
-                };
-            });
-
-        await logger(`[LDAP] Resultado: ${finalStudents.length} cadastrados, ${finalNotFoundStudents.length} não cadastrados.`);
-
-        return {
-            finalStudents,
-            notFoundStudents: finalNotFoundStudents,
-            toSwapStudents,
-            postgresStudents,
-        };
-
-    } catch (e: any) {
-        await logger(`[ERRO LDAP] Falha crítica no cruzamento de alunos: ${e.message}`);
-        // RECOVERY: Retorna os alunos extraídos como não encontrados em vez de esvaziar os arquivos
-        const recoveryNotFound = uniqueStudents.map(s => ({
-            'Matrícula': s.matricula,
-            'Nome': s.nome,
-            'Curso': s.curso,
-            'Tipo de Reserva': s.tipoReserva,
-            'CPF': 'Erro no LDAP',
-        }));
-        return { finalStudents: [], notFoundStudents: recoveryNotFound, toSwapStudents: [], postgresStudents: [] };
+        return { finalStudents, notFoundStudents, toSwapStudents, postgresStudents };
     } finally {
         ldapClient.unbind();
     }

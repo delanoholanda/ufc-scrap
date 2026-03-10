@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -15,7 +16,7 @@ import { BookOpenCheck, History, Home, LogOut, Settings, User, Users, Database, 
 import Link from "next/link";
 import SettingsDialog from "./settings-dialog";
 import { usePathname } from "next/navigation";
-import { Button } from "./ui/button";
+import { logoutUser } from "@/lib/auth-actions";
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -25,6 +26,11 @@ interface MainLayoutProps {
 
 export default function MainLayout({ children, onLogout, userId }: MainLayoutProps) {
   const pathname = usePathname();
+
+  const handleLogoutClick = async () => {
+    await logoutUser();
+    onLogout();
+  };
   
   return (
     <SidebarProvider>
@@ -109,7 +115,7 @@ export default function MainLayout({ children, onLogout, userId }: MainLayoutPro
                     </SettingsDialog>
                 </SidebarMenuItem>
                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={onLogout} tooltip="Sair">
+                    <SidebarMenuButton onClick={handleLogoutClick} tooltip="Sair">
                         <LogOut />
                         <span>Sair</span>
                     </SidebarMenuButton>

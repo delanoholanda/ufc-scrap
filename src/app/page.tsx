@@ -1,38 +1,44 @@
+
 "use client";
 
 import { useState, useEffect } from "react";
 import Dashboard from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import AuthPage from "./auth/page";
+import { checkAuth } from "@/lib/auth-actions";
 
 export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isClient, setIsClient] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<number | null>(null);
 
   useEffect(() => {
-    setIsClient(true);
-    const sessionUserId = sessionStorage.getItem("userId");
-    if (sessionUserId) {
-      setIsAuthenticated(true);
-      setUserId(parseInt(sessionUserId, 10));
+    async function validateSession() {
+      const id = await checkAuth();
+      if (id) {
+        setIsAuthenticated(true);
+        setUserId(id);
+      } else {
+        setIsAuthenticated(false);
+        setUserId(null);
+      }
+      setIsLoading(false);
     }
+    validateSession();
   }, []);
 
   const handleLogin = (id: number) => {
-    sessionStorage.setItem("userId", id.toString());
     setIsAuthenticated(true);
     setUserId(id);
   };
 
   const handleLogout = () => {
-    sessionStorage.removeItem("userId");
     setIsAuthenticated(false);
     setUserId(null);
-    window.location.href = '/'; // Redirect to auth page
+    window.location.href = '/';
   };
 
-  if (!isClient) {
+  if (isLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center space-y-4">
