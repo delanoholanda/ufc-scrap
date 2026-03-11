@@ -16,9 +16,12 @@ export default function Home() {
     async function validateSession() {
       const id = await checkAuth();
       if (id) {
+        // Sincroniza o sessionStorage caso o usuário tenha vindo de um refresh
+        sessionStorage.setItem("userId", id.toString());
         setIsAuthenticated(true);
         setUserId(id);
       } else {
+        sessionStorage.removeItem("userId");
         setIsAuthenticated(false);
         setUserId(null);
       }
@@ -28,11 +31,14 @@ export default function Home() {
   }, []);
 
   const handleLogin = (id: number) => {
+    // Garante que o sessionStorage seja populado no momento do login
+    sessionStorage.setItem("userId", id.toString());
     setIsAuthenticated(true);
     setUserId(id);
   };
 
   const handleLogout = () => {
+    sessionStorage.removeItem("userId");
     setIsAuthenticated(false);
     setUserId(null);
     window.location.href = '/';

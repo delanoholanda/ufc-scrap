@@ -19,6 +19,7 @@ const MatriculaSchema = z.object({
 async function getNextUidNumber(pool: any): Promise<number> {
     const res = await pool.query('SELECT MAX(uidnumber) as max_uid FROM matriculas');
     const maxUid = parseInt(res.rows[0].max_uid, 10);
+    // Se não houver registros, começa em um valor base seguro (ex: 100000)
     return isNaN(maxUid) ? 100000 : maxUid + 1;
 }
 
@@ -136,7 +137,8 @@ export async function processMatriculasCsv(csvContent: string) {
 
       for (const row of (results.data as any[])) {
         try {
-          const matricula = parseInt(row['Matrícula'] || row.Matricula || row.matricula, 10);
+          const matriculaStr = row['Matrícula'] || row.Matricula || row.matricula;
+          const matricula = parseInt(matriculaStr, 10);
           const nome = row.Nome || row.nome;
           const curso = row.Curso || row.curso;
 
@@ -177,23 +179,21 @@ export async function syncStudentsToPostgres(students: any[]) {
     const pool = getPgPool();
     let count = 0;
     try {
-        // Obter o ponto de partida para novos UIDs
         const res = await pool.query('SELECT MAX(uidnumber) as max_uid FROM matriculas');
         let currentMaxUid = parseInt(res.rows[0].max_uid, 10);
         if (isNaN(currentMaxUid)) currentMaxUid = 100000;
 
         for (const s of students) {
-            const matricula = parseInt(s.matricula || s['Matrícula'], 10);
+            const matriculaStr = s.matricula || s['Matrícula'] || s.Matricula;
+            const matricula = parseInt(matriculaStr, 10);
             const nome = s.nome || s.Nome;
             const curso = s.curso || s.Curso;
 
             if (isNaN(matricula) || !nome) continue;
             
-            // Verificar se o aluno já existe
             const check = await pool.query('SELECT uidnumber FROM matriculas WHERE matricula = $1', [matricula]);
             
             if (check.rows.length === 0) {
-                // Aluno NOVO: Incrementa o maior UID e salva
                 currentMaxUid++;
                 await pool.query(
                     `INSERT INTO matriculas (matricula, nome, curso, cadastrado, uidnumber) 
@@ -202,7 +202,6 @@ export async function syncStudentsToPostgres(students: any[]) {
                 );
                 count++;
             } else {
-                // Aluno EXISTENTE: Apenas atualiza dados básicos
                 await pool.query(
                     `UPDATE matriculas SET nome = $1, curso = $2 WHERE matricula = $3`,
                     [nome, curso, matricula]
@@ -212,6 +211,6 @@ export async function syncStudentsToPostgres(students: any[]) {
         return { success: true, message: `${count} alunos novos cadastrados no PostgreSQL.` };
     } catch (e: any) {
         console.error("[SYNC_POSTGRES_ERROR]", e.message);
-        return { success: false, error: e.message, message: 'Erro ao sincronizar com Postgres.' };
+        return { success: true, message: 'Erro ao sincronizar com Postgres, mas a extração continuou.' };
     }
 }
