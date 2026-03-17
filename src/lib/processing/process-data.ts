@@ -94,6 +94,10 @@ export async function processData(
             content: toCSV(finalProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}, {key: 'siape', label: 'siape'}]) 
         },
         { 
+            filename: `Professores-NãoEncontrados-${category}.csv`, 
+            content: toCSV(notFoundProfessors, [{key: 'nome', label: 'Nome'}, {key: 'cpf', label: 'CPF'}, {key: 'course1', label: 'Curso'}]) 
+        },
+        { 
             filename: `Usuarios-${category}.csv`, 
             content: toCSV(allUsers, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}]) 
         },
