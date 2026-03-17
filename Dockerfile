@@ -1,23 +1,24 @@
-# Estágio 1: Construção
-FROM node:20-bookworm-slim AS builder
+
+# Stage 1: Dependências e Build
+FROM node:20-bookworm AS builder
 WORKDIR /app
 
-# Instala dependências
+# Instalar dependências necessárias para o build
 COPY package.json package-lock.json* ./
 RUN npm install
 
-# Copia o código e gera o build
+# Copiar código e rodar build
 COPY . .
+
+# Usar uma variável de ambiente temporária para o build passar
+ENV SESSION_SECRET=build_time_only_secret
 RUN npm run build
 
-# Estágio 2: Execução
-FROM node:20-bookworm-slim AS runner
+# Stage 2: Runner
+FROM node:20-bookworm AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
-ENV PORT 3000
-
-# Instala dependências do sistema para o Puppeteer e Google Chrome
+# Instalar dependências de sistema para o Puppeteer e Google Chrome
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -55,19 +56,26 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala o Google Chrome oficial para garantir compatibilidade
+# Instalar Google Chrome Estável
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
     && apt-get update \
     && apt-get install -y google-chrome-stable --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia os artefatos do build (usando output: 'standalone')
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Copiar arquivos necessários do builder
+COPY --from=builder /app/next.config.ts ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# O Puppeteer no código já aponta para /usr/bin/google-chrome
+# Garantir permissões para a pasta de dados e uploads
+RUN mkdir -p data public/uploads && chmod -R 777 data public/uploads
+
 EXPOSE 3000
 
+# O comando de inicialização do Next.js standalone
 CMD ["node", "server.js"]

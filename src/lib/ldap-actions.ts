@@ -1,3 +1,4 @@
+
 'use server';
 
 import ldap, { Change } from 'ldapjs';
@@ -62,7 +63,6 @@ export async function fetchLdapUsers(params: {
       if (['matricula', 'uid', 'siape'].includes(searchField)) {
         filter = `(&${filter}(${searchField}=${escapeLdapFilter(term)}))`;
       } else if (searchField === 'nomecompleto') {
-        // Busca inteligente: Wagner Al-Han -> AND (*WAGNER*)(*AL*)(*HAN*)
         const normalizedTerm = normalizeString(term);
         const parts = normalizedTerm.split(/\s+/).filter(p => p.length > 0);
         if (parts.length > 0) {
@@ -92,7 +92,6 @@ export async function fetchLdapUsers(params: {
 
         res.on('searchEntry', (entry) => {
           const attrs: any = {};
-          // Normaliza as chaves para minúsculas para garantir compatibilidade com o frontend
           entry.pojo.attributes.forEach(a => { 
               attrs[a.type.toLowerCase()] = a.values[0]; 
           });
@@ -136,7 +135,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     const updateData: any = { ...attributes };
     
-    // Sincronização Automática CN e SN (Primeiro Nome / Restante)
+    // Sincronização Automática CN e SN (Primeiro Nome / Restante) em maiúsculas
     if (updateData.nomecompleto) {
         const cleanName = normalizeString(updateData.nomecompleto);
         const nameParts = cleanName.split(/\s+/);
@@ -154,7 +153,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Formato Change que funcionou para resolver "modification must be an Attribute"
+    // Formato Change oficial que resolve "modification must be an Attribute"
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',
