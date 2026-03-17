@@ -1,13 +1,8 @@
 node_modules
 .next
+data
+public/uploads
+.env
 .git
-data/*.db
-data/*.db-wal
-data/*.db-shm
-public/uploads/*
 README.md
 DOCKER_DEPLOY.md
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
