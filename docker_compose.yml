@@ -1,0 +1,17 @@
+services:
+  ufc-scraper:
+    build: .
+    container_name: ufc-scraper-app
+    ports:
+      - "8098:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./public/uploads:/app/public/uploads
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
