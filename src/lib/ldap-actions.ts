@@ -1,4 +1,3 @@
-
 'use server';
 
 import ldap, { Change } from 'ldapjs';
@@ -14,14 +13,20 @@ function getLdapClient(): ldap.Client {
   });
 }
 
+/**
+ * Normaliza strings conforme regra: Uppercase, sem acentos, hífens viram espaços.
+ */
 function normalizeString(str: string): string {
     if (!str) return '';
-    return str.toUpperCase().trim();
+    return str
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '') // Remove acentos
+        .replace(/-/g, ' ')              // Hífens viram espaços
+        .replace(/\s+/g, ' ')            // Remove espaços duplos
+        .trim();
 }
 
-/**
- * Escapa caracteres especiais para filtros LDAP
- */
 function escapeLdapFilter(str: string): string {
   if (!str) return '';
   return str.replace(/\\/g, '\\5c')
@@ -54,27 +59,17 @@ export async function fetchLdapUsers(params: {
     let filter = baseFilter;
     if (searchValue) {
       const term = searchValue.trim();
-      
       if (['matricula', 'uid', 'siape'].includes(searchField)) {
-        // Busca exata para IDs numéricos/documentos
         filter = `(&${filter}(${searchField}=${escapeLdapFilter(term)}))`;
-      } else if (searchField === 'mail') {
-        // Busca por e-mail
-        filter = `(&${filter}(mail=*${escapeLdapFilter(term)}*))`;
       } else if (searchField === 'nomecompleto') {
-        // Busca "Smart" Multitermo para nomes:
-        // Converte para uppercase e divide o nome em partes para busca independente
-        const upperTerm = term.toUpperCase();
-        const cleanTerm = upperTerm.replace(/-/g, ' ').replace(/\s+/g, ' ');
-        const parts = cleanTerm.split(/\s+/).filter(p => p.length > 0);
-        
+        // Busca inteligente: Wagner Al-Han -> AND (*WAGNER*)(*AL*)(*HAN*)
+        const normalizedTerm = normalizeString(term);
+        const parts = normalizedTerm.split(/\s+/).filter(p => p.length > 0);
         if (parts.length > 0) {
-          // Cada parte deve estar contida no campo nomecompleto
           const subFilters = parts.map(p => `(nomecompleto=*${escapeLdapFilter(p)}*)`).join('');
           filter = `(&${filter}${subFilters})`;
         }
       } else {
-        // Busca substring genérica para outros campos
         filter = `(&${filter}(${searchField}=*${escapeLdapFilter(term)}*))`;
       }
     }
@@ -88,10 +83,7 @@ export async function fetchLdapUsers(params: {
       const opts: ldap.SearchOptions = {
         filter,
         scope: 'sub' as const,
-        paged: {
-          pageSize: 250,
-          pagePause: false
-        },
+        paged: { pageSize: 250, pagePause: false },
         sizeLimit: 0,
       };
 
@@ -100,24 +92,19 @@ export async function fetchLdapUsers(params: {
 
         res.on('searchEntry', (entry) => {
           const attrs: any = {};
+          // Normaliza as chaves para minúsculas para garantir compatibilidade com o frontend
           entry.pojo.attributes.forEach(a => { 
-            // Mapeia os atributos para lowercase para garantir compatibilidade com a interface
-            attrs[a.type.toLowerCase()] = a.values[0]; 
+              attrs[a.type.toLowerCase()] = a.values[0]; 
           });
           allUsers.push({ dn: entry.dn.toString(), ...attrs } as LdapUser);
         });
 
         res.on('error', (err: any) => {
-          if (err.name === 'SizeLimitExceededError' || err.code === 4) {
-             finalizeSearch();
-          } else {
-             resolve({ success: false, error: err.message });
-          }
+          if (err.name === 'SizeLimitExceededError' || err.code === 4) finalizeSearch();
+          else resolve({ success: false, error: err.message });
         });
 
-        res.on('end', () => {
-          finalizeSearch();
-        });
+        res.on('end', () => finalizeSearch());
 
         function finalizeSearch() {
           const total = allUsers.length;
@@ -147,31 +134,36 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
       });
     });
 
-    const changes: Change[] = [];
+    const updateData: any = { ...attributes };
     
-    if (attributes.nomecompleto) {
-        const nameParts = attributes.nomecompleto.trim().split(/\s+/);
+    // Sincronização Automática CN e SN (Primeiro Nome / Restante)
+    if (updateData.nomecompleto) {
+        const cleanName = normalizeString(updateData.nomecompleto);
+        const nameParts = cleanName.split(/\s+/);
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || firstName;
         
-        attributes.cn = normalizeString(firstName);
-        attributes.sn = normalizeString(lastName);
-        attributes.nomecompleto = attributes.nomecompleto.trim();
+        updateData.cn = firstName;
+        updateData.sn = lastName;
+        updateData.nomecompleto = cleanName;
     }
 
-    Object.entries(attributes).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && key !== 'dn' && key !== 'uid') {
-            changes.push(new Change({
-                operation: 'replace',
-                modification: {
-                    type: key,
-                    values: [String(value)]
-                }
-            }));
-        }
+    const validEntries = Object.entries(updateData).filter(([key, value]) => {
+        return value !== undefined && value !== null && key !== 'dn' && key !== 'uid';
     });
 
-    if (changes.length === 0) return { success: true };
+    if (validEntries.length === 0) return { success: true };
+
+    // Formato Change que funcionou para resolver "modification must be an Attribute"
+    const changes: Change[] = validEntries.map(([key, value]) => {
+      return new Change({
+        operation: 'replace',
+        modification: {
+            type: key,
+            values: [String(value)]
+        }
+      });
+    });
 
     await new Promise<void>((resolve, reject) => {
       client.modify(dn, changes, (err) => {
@@ -207,7 +199,9 @@ export async function findLdapUserByDn(dn: string): Promise<{ success: boolean; 
         if (err) return resolve({ success: false, error: err.message });
         res.on('searchEntry', (entry) => {
           const attrs: any = {};
-          entry.pojo.attributes.forEach(attr => { attrs[attr.type.toLowerCase()] = attr.values[0]; });
+          entry.pojo.attributes.forEach(a => { 
+              attrs[a.type.toLowerCase()] = a.values[0]; 
+          });
           resolve({ success: true, user: { dn: entry.dn.toString(), ...attrs } as LdapUser });
         });
         res.on('error', (err) => resolve({ success: false, error: err.message }));

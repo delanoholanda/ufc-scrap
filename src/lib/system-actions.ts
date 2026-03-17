@@ -1,8 +1,13 @@
+
 'use server';
 
 import { Pool } from 'pg';
 import ldap from 'ldapjs';
 import nodemailer from 'nodemailer';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execPromise = promisify(exec);
 
 interface ConnectionResult {
   success: boolean;
@@ -13,18 +18,37 @@ interface TestResults {
   postgres: ConnectionResult;
   ldap: ConnectionResult;
   email: ConnectionResult;
+  chrome: ConnectionResult;
 }
 
 export async function testConnections(): Promise<TestResults> {
   const pgResult = await testPostgresConnection();
   const ldapResult = await testLdapConnection();
   const emailResult = await testEmailConnection();
+  const chromeResult = await testChromeAvailability();
 
   return {
     postgres: pgResult,
     ldap: ldapResult,
     email: emailResult,
+    chrome: chromeResult,
   };
+}
+
+async function testChromeAvailability(): Promise<ConnectionResult> {
+  const isProduction = !!process.env.FIREBASE_APP_HOSTING_URL || process.env.NODE_ENV === 'production';
+  const chromePath = isProduction ? '/usr/bin/google-chrome' : 'google-chrome';
+
+  try {
+    // Tenta executar o comando --version para ver se o binário existe e responde
+    const { stdout } = await execPromise(`${chromePath} --version`);
+    return { success: true, message: `Chrome detectado: ${stdout.trim()}` };
+  } catch (error: any) {
+    return { 
+      success: false, 
+      message: `Chrome não encontrado no caminho: ${chromePath}. Verifique o apphosting.yaml.` 
+    };
+  }
 }
 
 async function testPostgresConnection(): Promise<ConnectionResult> {
@@ -48,7 +72,7 @@ async function testPostgresConnection(): Promise<ConnectionResult> {
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
     database: process.env.POSTGRES_DB,
-    connectionTimeoutMillis: 5000, // 5 seconds
+    connectionTimeoutMillis: 5000,
   });
 
   try {
@@ -79,7 +103,7 @@ async function testLdapConnection(): Promise<ConnectionResult> {
   const ldapUrl = `ldap://${process.env.LDAP_SERVER}:${process.env.LDAP_PORT}`;
   const client = ldap.createClient({
     url: ldapUrl,
-    connectTimeout: 5000, // 5 seconds
+    connectTimeout: 5000,
   });
 
   return new Promise((resolve) => {
@@ -111,13 +135,12 @@ async function testEmailConnection(): Promise<ConnectionResult> {
     const transporter = nodemailer.createTransport({
         host: process.env.EMAIL_HOST,
         port: parseInt(process.env.EMAIL_PORT!, 10),
-        secure: parseInt(process.env.EMAIL_PORT!, 10) === 465, // true for 465, false for other ports
+        secure: parseInt(process.env.EMAIL_PORT!, 10) === 465,
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASS,
         },
         tls: {
-            // do not fail on invalid certs
             rejectUnauthorized: false
         }
     });
