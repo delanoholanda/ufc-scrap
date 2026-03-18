@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useCallback, useTransition, Suspense } from 'react';
@@ -49,6 +48,8 @@ import MainLayout from '@/components/main-layout';
 import MatriculasDialog from '@/components/matriculas-dialog';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Label } from '@/components/ui/label';
+
+export const dynamic = 'force-dynamic';
 
 function MatriculasContent() {
   const [matriculas, setMatriculas] = useState<PostgresMatricula[]>([]);

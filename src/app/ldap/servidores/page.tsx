@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, Suspense } from 'react';
@@ -41,6 +40,8 @@ import { Button } from '@/components/ui/button';
 import LdapUserDialog from '@/components/ldap-user-dialog';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+
+export const dynamic = 'force-dynamic';
 
 function ServidoresContent() {
   const [users, setUsers] = useState<LdapUser[]>([]);

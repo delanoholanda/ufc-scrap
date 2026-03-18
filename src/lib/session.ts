@@ -1,10 +1,8 @@
-
 import { SignJWT, jwtVerify } from 'jose';
 
 const secretKey = process.env.SESSION_SECRET;
 
-// No build do Docker ou em desenvolvimento local, essa variável pode não estar disponível.
-// Usamos um fallback para evitar erros de compilação, mas o segredo real deve ser passado em runtime.
+// Fallback apenas para evitar erros durante o build do Docker/Next.js
 const fallbackSecret = 'chave-temporaria-de-seguranca-para-ambiente-de-build';
 const key = new TextEncoder().encode(secretKey || fallbackSecret);
 

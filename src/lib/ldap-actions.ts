@@ -1,4 +1,3 @@
-
 'use server';
 
 import ldap, { Change } from 'ldapjs';
@@ -153,7 +152,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Usando a estrutura explicitamente validada pelo usuário
+    // Usando a estrutura explicitamente validada pelo usuário (new Change)
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',
