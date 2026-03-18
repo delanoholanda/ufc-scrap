@@ -1,24 +1,25 @@
 
-# Stage 1: Dependências e Build
+# Stage 1: Builder
 FROM node:20-bookworm AS builder
 WORKDIR /app
 
-# Instalar dependências necessárias para o build
+# Instala dependências
 COPY package.json package-lock.json* ./
 RUN npm install
 
-# Copiar código e rodar build
+# Copia código e builda
 COPY . .
-
-# Usar uma variável de ambiente temporária para o build passar
-ENV SESSION_SECRET=build_time_only_secret
+# Variável temporária para o build passar sem erros de segredo
+ENV SESSION_SECRET=build_time_secret_placeholder
 RUN npm run build
 
 # Stage 2: Runner
 FROM node:20-bookworm AS runner
 WORKDIR /app
 
-# Instalar dependências de sistema para o Puppeteer e Google Chrome
+ENV NODE_ENV=production
+
+# Instala dependências do sistema para o Chrome e Puppeteer no Debian Bookworm
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -53,29 +54,24 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     fonts-liberation \
     xdg-utils \
-    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar Google Chrome Estável
+# Instala o Google Chrome estável oficial
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
     && apt-get update \
-    && apt-get install -y google-chrome-stable --no-install-recommends \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production
-ENV PORT=3000
-
-# Copiar arquivos necessários do builder
-COPY --from=builder /app/next.config.ts ./
+# Copia apenas o necessário do estágio de builder (standalone mode)
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Garantir permissões para a pasta de dados e uploads
-RUN mkdir -p data public/uploads && chmod -R 777 data public/uploads
+# Garante permissões na pasta de dados
+RUN mkdir -p data && chmod 777 data
 
 EXPOSE 3000
 
-# O comando de inicialização do Next.js standalone
+# O standalone mode gera um server.js na raiz
 CMD ["node", "server.js"]
