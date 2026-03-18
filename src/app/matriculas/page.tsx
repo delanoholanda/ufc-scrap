@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useTransition } from 'react';
+import { useState, useEffect, useCallback, useTransition, Suspense } from 'react';
 import { useDebouncedCallback } from 'use-debounce';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,7 +50,7 @@ import MatriculasDialog from '@/components/matriculas-dialog';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Label } from '@/components/ui/label';
 
-export default function MatriculasPage() {
+function MatriculasContent() {
   const [matriculas, setMatriculas] = useState<PostgresMatricula[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, startTransition] = useTransition();
@@ -66,9 +66,7 @@ export default function MatriculasPage() {
   const searchTerm = searchParams.get('search') || '';
   const itemsPerPage = Number(searchParams.get('perPage')) || 10;
 
-  // Estado local para o input de busca
   const [searchInput, setSearchInput] = useState(searchTerm);
-
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const { toast } = useToast();
   
@@ -82,7 +80,6 @@ export default function MatriculasPage() {
     }
   }, []);
 
-  // Sincroniza input local
   useEffect(() => {
     setSearchInput(searchTerm);
   }, [searchTerm]);
@@ -190,7 +187,6 @@ export default function MatriculasPage() {
       });
     }
     setIsUploading(false);
-    // Reset file input
     event.target.value = '';
   }
 
@@ -380,5 +376,17 @@ export default function MatriculasPage() {
         matricula={editingMatricula}
        />
     </MainLayout>
+  );
+}
+
+export default function MatriculasPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    }>
+      <MatriculasContent />
+    </Suspense>
   );
 }

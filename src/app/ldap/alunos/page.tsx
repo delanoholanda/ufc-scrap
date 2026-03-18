@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from 'react';
+import { useState, useEffect, useTransition, useCallback, Suspense } from 'react';
 import { useDebouncedCallback } from 'use-debounce';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -42,7 +42,7 @@ import LdapUserDialog from '@/components/ldap-user-dialog';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 
-export default function LdapAlunosPage() {
+function AlunosContent() {
   const [users, setUsers] = useState<LdapUser[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, startTransition] = useTransition();
@@ -59,9 +59,7 @@ export default function LdapAlunosPage() {
   const statusFilter = searchParams.get('status') || 'ativo';
   const itemsPerPage = Number(searchParams.get('perPage')) || 10;
 
-  // Estado local para o input de busca para evitar re-renders excessivos
   const [searchInput, setSearchInput] = useState(searchTerm);
-
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const { toast } = useToast();
 
@@ -74,7 +72,6 @@ export default function LdapAlunosPage() {
     }
   }, []);
 
-  // Sincroniza o input local se a URL mudar externamente (ex: navegação)
   useEffect(() => {
     setSearchInput(searchTerm);
   }, [searchTerm]);
@@ -381,5 +378,17 @@ export default function LdapAlunosPage() {
         />
       )}
     </MainLayout>
+  );
+}
+
+export default function LdapAlunosPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    }>
+      <AlunosContent />
+    </Suspense>
   );
 }

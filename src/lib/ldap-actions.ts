@@ -153,7 +153,6 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Formato Change oficial que resolve "modification must be an Attribute"
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',
