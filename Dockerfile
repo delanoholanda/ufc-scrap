@@ -1,31 +1,32 @@
-# Estágio de Dependências e Build
+
+# Estágio 1: Instalar dependências e buildar o projeto
 FROM node:20-bookworm AS builder
 WORKDIR /app
 
-# Copia arquivos de definição de pacotes
+# Copiar arquivos de dependências
 COPY package.json package-lock.json* ./
-
-# Instala todas as dependências (incluindo devDependencies para o build)
 RUN npm install
 
-# Copia o restante do código
+# Copiar código fonte
 COPY . .
 
-# Variável temporária para o build passar sem erro de validação de ambiente
-ENV SESSION_SECRET=build_temporary_secret
-ENV NEXT_TELEMETRY_DISABLED=1
+# Desativar telemetria do Next.js
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# Executa o build de produção (gera a pasta .next/standalone)
+# Variável temporária para o build
+ENV SESSION_SECRET="build-fallback-secret"
+
+# Buildar o projeto
 RUN npm run build
 
-# Estágio Final (Runner)
+# Estágio 2: Runner (Imagem final)
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# Instala as dependências de sistema necessárias para o Chrome/Puppeteer no Debian Slim
+# Instalar dependências do sistema para o Chrome/Puppeteer no Debian Bookworm
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -60,25 +61,31 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     fonts-liberation \
     xdg-utils \
+    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala o Google Chrome estável oficial
+# Instalar Google Chrome Estável
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
     && apt-get update && apt-get install -y google-chrome-stable --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia os arquivos necessários do estágio builder
-# O Next.js standalone gera tudo o que é necessário para rodar o servidor em uma pasta isolada
+# Criar pasta de dados e uploads com permissões corretas
+RUN mkdir -p data public/uploads && chown -R node:node data public/uploads
+
+# Copiar arquivos necessários do estágio de build
+# O standalone build gera tudo o que é necessário para rodar o app sem node_modules completo
+COPY --from=builder /app/next.config.ts ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Cria a pasta de dados para o SQLite e logs (persistência via volume no docker-compose)
-RUN mkdir -p data
+# Definir permissões para o usuário node
+USER node
 
-# Porta padrão do Next.js
+# Porta exposta (será mapeada no docker-compose)
 EXPOSE 3000
 
-# Comando para iniciar a aplicação usando o servidor standalone gerado
+# Comando para iniciar a aplicação
+# O standalone server fica em server.js
 CMD ["node", "server.js"]

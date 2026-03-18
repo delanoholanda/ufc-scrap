@@ -1,3 +1,4 @@
+
 'use server';
 
 import ldap, { Change } from 'ldapjs';
@@ -134,7 +135,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     const updateData: any = { ...attributes };
     
-    // Sincronização Automática CN e SN (Primeiro Nome / Restante) em maiúsculas
+    // Sincronização Automática CN e SN (Primeiro Nome / Restante) em maiúsculas conforme regra
     if (updateData.nomecompleto) {
         const cleanName = normalizeString(updateData.nomecompleto);
         const nameParts = cleanName.split(/\s+/);
@@ -152,7 +153,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Usando a estrutura explicitamente validada pelo usuário (new Change)
+    // Usando o formato de Change validado pelo usuário que funcionou para resolver o erro de Atributo
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',

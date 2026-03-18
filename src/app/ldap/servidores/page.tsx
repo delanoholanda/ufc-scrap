@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, Suspense } from 'react';
@@ -31,7 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Search, Loader2, AlertCircle, Users, GraduationCap, Edit } from 'lucide-react';
+import { Search, Loader2, Users, GraduationCap, Edit } from 'lucide-react';
 import MainLayout from '@/components/main-layout';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Label } from '@/components/ui/label';

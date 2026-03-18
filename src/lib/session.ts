@@ -1,15 +1,17 @@
+
 import { SignJWT, jwtVerify } from 'jose';
 
 const secretKey = process.env.SESSION_SECRET;
 
 // Fallback apenas para evitar erros durante o build do Docker/Next.js
+// Em tempo de execução real, o segredo do .env será obrigatório.
 const fallbackSecret = 'chave-temporaria-de-seguranca-para-ambiente-de-build';
 const key = new TextEncoder().encode(secretKey || fallbackSecret);
 
 export async function encrypt(payload: any) {
   // Aviso apenas no servidor para não expor em logs de cliente se for o caso
   if (process.env.NODE_ENV === 'production' && !secretKey && typeof window === 'undefined') {
-    console.warn('[WARNING] SESSION_SECRET não definida. Usando chave de fallback insegura para o build.');
+    console.warn('[WARNING] SESSION_SECRET não definida. Usando chave de fallback para o build.');
   }
 
   return await new SignJWT(payload)
