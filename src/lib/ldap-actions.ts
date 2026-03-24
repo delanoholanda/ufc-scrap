@@ -133,9 +133,8 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
       });
     });
 
+    // Sincronização Automática CN e SN (Primeiro Nome / Restante)
     const updateData: any = { ...attributes };
-    
-    // Sincronização Automática CN e SN (Primeiro Nome / Restante) em maiúsculas conforme regra
     if (updateData.nomecompleto) {
         const cleanName = normalizeString(updateData.nomecompleto);
         const nameParts = cleanName.split(/\s+/);
@@ -153,7 +152,7 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Usando o formato de Change validado pelo usuário que funcionou para resolver o erro de Atributo
+    // Formato de Change validado pelo usuário que funcionou para resolver o erro de Atributo
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',
@@ -166,7 +165,12 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     await new Promise<void>((resolve, reject) => {
       client.modify(dn, changes, (err) => {
-        if (err) reject(err); else resolve();
+        if (err) {
+            console.error('[LDAP_MODIFY_ERROR]', err);
+            reject(err);
+        } else {
+            resolve();
+        }
       });
     });
 

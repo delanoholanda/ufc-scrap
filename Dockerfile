@@ -1,91 +1,62 @@
 
-# Estágio 1: Instalar dependências e buildar o projeto
+# Stage 1: Build the application
 FROM node:20-bookworm AS builder
 WORKDIR /app
 
-# Copiar arquivos de dependências
+# Instala dependências do sistema para o build (se houver scripts que precisem)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json* ./
 RUN npm install
 
-# Copiar código fonte
 COPY . .
 
-# Desativar telemetria do Next.js
-ENV NEXT_TELEMETRY_DISABLED 1
+# Desabilita telemetria e pula validações pesadas durante o build
+ENV NEXT_TELEMETRY_DISABLED=1
+# A SESSION_SECRET é opcional no build para evitar erros de validação
+ENV SESSION_SECRET=build-fallback-secret
 
-# Variável temporária para o build
-ENV SESSION_SECRET="build-fallback-secret"
-
-# Buildar o projeto
 RUN npm run build
 
-# Estágio 2: Runner (Imagem final)
+# Stage 2: Run the application
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Instalar dependências do sistema para o Chrome/Puppeteer no Debian Bookworm
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    fonts-liberation \
-    xdg-utils \
+# Instala o Google Chrome estável e dependências para o Puppeteer
+RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y \
+    google-chrome-stable \
+    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar Google Chrome Estável
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-    && apt-get update && apt-get install -y google-chrome-stable --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+# Cria o usuário para rodar o app
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
-# Criar pasta de dados e uploads com permissões corretas
-RUN mkdir -p data public/uploads && chown -R node:node data public/uploads
+# Cria pastas para persistência
+RUN mkdir -p /app/data /app/public/uploads && chown -R nextjs:nodejs /app
 
-# Copiar arquivos necessários do estágio de build
-# O standalone build gera tudo o que é necessário para rodar o app sem node_modules completo
+# Copia arquivos do builder
 COPY --from=builder /app/next.config.ts ./
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Definir permissões para o usuário node
-USER node
+USER nextjs
 
-# Porta exposta (será mapeada no docker-compose)
 EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
-# Comando para iniciar a aplicação
-# O standalone server fica em server.js
 CMD ["node", "server.js"]
