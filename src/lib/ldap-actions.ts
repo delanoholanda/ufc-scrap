@@ -63,12 +63,39 @@ export async function fetchLdapUsers(params: {
       if (['matricula', 'uid', 'siape'].includes(searchField)) {
         filter = `(&${filter}(${searchField}=${escapeLdapFilter(term)}))`;
       } else if (searchField === 'nomecompleto') {
-        const normalizedTerm = normalizeString(term);
-        const parts = normalizedTerm.split(/\s+/).filter(p => p.length > 0);
+        const escapedTerm = escapeLdapFilter(term);
+        const parts = term.split(/\s+/).filter(Boolean);
+
+        const clauses: string[] = [];
+
+        // 1. Busca parcial pela string completa contínua
+        clauses.push(`(nomecompleto=*${escapedTerm}*)`);
+        clauses.push(`(cn=*${escapedTerm}*)`);
+        clauses.push(`(sn=*${escapedTerm}*)`);
+
         if (parts.length > 0) {
-          const subFilters = parts.map(p => `(nomecompleto=*${escapeLdapFilter(p)}*)`).join('');
-          filter = `(&${filter}${subFilters})`;
+          // 2. Sintaxe LDAP de substring em sequência (*palavra1*palavra2*...)
+          const seqFilter = parts.map(p => escapeLdapFilter(p)).join('*');
+          clauses.push(`(nomecompleto=*${seqFilter}*)`);
         }
+
+        if (parts.length >= 2) {
+          const first = escapeLdapFilter(parts[0]);
+          const lastSeq = parts.slice(1).map(p => escapeLdapFilter(p)).join('*');
+          // 3. Primeiro nome no 'cn' e sobrenome/partes no 'sn'
+          clauses.push(`(&(cn=*${first}*)(sn=*${lastSeq}*))`);
+        }
+
+        if (parts.length > 0) {
+          // 4. Cada token presente em pelo menos um dos atributos nomecompleto, cn ou sn
+          const tokenFilters = parts.map(p => {
+            const ep = escapeLdapFilter(p);
+            return `(|(nomecompleto=*${ep}*)(cn=*${ep}*)(sn=*${ep}*))`;
+          }).join('');
+          clauses.push(`(&${tokenFilters})`);
+        }
+
+        filter = `(&${filter}(|${clauses.join('')}))`;
       } else {
         filter = `(&${filter}(${searchField}=*${escapeLdapFilter(term)}*))`;
       }
