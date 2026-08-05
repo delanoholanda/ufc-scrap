@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import LogViewer from "./log-viewer";
 import { Switch } from "./ui/switch";
 import { useRouter } from 'next/navigation';
+import { Progress } from "@/components/ui/progress";
 
 export default function ScraperView() {
   const [loading, setLoading] = useState(false);
@@ -20,6 +21,7 @@ export default function ScraperView() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [progress, setProgress] = useState<{ current: number; total: number; message: string } | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [visibleMode, setVisibleMode] = useState(false);
   const { toast } = useToast();
@@ -64,6 +66,7 @@ export default function ScraperView() {
     setError(null);
     setInfo(null);
     setLogs([]);
+    setProgress(null);
     setCurrentExtractionId(null);
 
     const formData = new FormData(event.currentTarget);
@@ -102,6 +105,9 @@ export default function ScraperView() {
           const jsonObjects = value.trim().split('\n').filter(s => s.trim() !== '');
           for (const jsonString of jsonObjects) {
              const chunk = JSON.parse(jsonString);
+              if(chunk.progress) {
+                setProgress(chunk.progress);
+              }
               if(chunk.log) {
                 setLogs(prev => [...prev, chunk.log]);
               }
@@ -213,12 +219,44 @@ export default function ScraperView() {
         </CardContent>
       </Card>
       
-      {(loading && !showLogs) && (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center animate-pulse">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            <p className="text-muted-foreground">Aguarde, o robô está trabalhando...</p>
-            <p className="text-sm text-muted-foreground">Isso pode levar alguns minutos. Não feche esta aba.</p>
-        </div>
+      {loading && !showLogs && (
+        <Card className="border-primary/20 bg-card p-6 shadow-sm">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-base">Processando Extração</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {progress?.message || "Aguardando inicialização do robô..."}
+                  </p>
+                </div>
+              </div>
+              {progress && progress.total > 0 && (
+                <div className="text-right">
+                  <span className="text-2xl font-bold text-primary">
+                    {Math.round((progress.current / progress.total) * 100)}%
+                  </span>
+                  <p className="text-xs text-muted-foreground">
+                    {progress.current} de {progress.total} turmas
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <Progress 
+              value={progress && progress.total > 0 ? (progress.current / progress.total) * 100 : 5} 
+              className="h-3 w-full bg-secondary"
+            />
+
+            <div className="flex justify-between items-center text-xs text-muted-foreground pt-1">
+              <span>Status: {progress?.message ? `Processando ${progress.message}` : "Iniciando..."}</span>
+              <span>Por favor, mantenha esta aba aberta</span>
+            </div>
+          </div>
+        </Card>
       )}
 
       {info && !loading && (

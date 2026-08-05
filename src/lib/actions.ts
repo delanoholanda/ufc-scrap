@@ -48,7 +48,8 @@ async function saveProcessedFiles(extractionId: number, files: CSVFile[]) {
 export async function scrapeUFCData(
     formData: FormData,
     onLog: (log: string) => Promise<void>,
-    onIdCreated: (id: number) => Promise<void>
+    onIdCreated: (id: number) => Promise<void>,
+    onProgress?: (progress: { current: number; total: number; message: string }) => Promise<void>
 ): Promise<{ success: boolean; data?: ScrapedDataRow[]; error?: string, cancelled?: boolean }> {
     const userId = await checkAuth();
     if (!userId) return { success: false, error: "Acesso negado. Sessão expirada." };
@@ -254,6 +255,9 @@ export async function scrapeUFCData(
         }
 
         await addLog(`[PROCESS] ${turmaPayloads.length} turmas identificadas. Carregando alunos...`);
+        if (onProgress) {
+            await onProgress({ current: 0, total: turmaPayloads.length, message: `${turmaPayloads.length} turmas identificadas.` });
+        }
         const scrapedData: ScrapedDataRow[] = [];
 
         for (let i = 0; i < turmaPayloads.length; i++) {
@@ -339,8 +343,20 @@ export async function scrapeUFCData(
                 }
             }, payload);
 
+            const msgTurma = turmaResult?.codigo 
+                ? `${turmaResult.codigo} - ${turmaResult.componente} - Turma ${turmaResult.turma}`
+                : `Turma ${i + 1}`;
+
+            if (onProgress) {
+                await onProgress({
+                    current: i + 1,
+                    total: turmaPayloads.length,
+                    message: msgTurma
+                });
+            }
+
             if (turmaResult && !turmaResult.error && turmaResult.rows) {
-                await addLog(`[${i + 1}/${turmaPayloads.length}] Turma: ${turmaResult.codigo} - ${turmaResult.componente} - ${turmaResult.turma}`);
+                await addLog(`[${i + 1}/${turmaPayloads.length}] Turma: ${msgTurma}`);
                 scrapedData.push(...turmaResult.rows);
             } else if (turmaResult?.error) {
                 await addLog(`[AVISO] [${i + 1}/${turmaPayloads.length}] Erro ao carregar turma: ${turmaResult.error}`);
@@ -350,6 +366,13 @@ export async function scrapeUFCData(
         }
 
         await addLog("Salvando e processando dados...");
+        if (onProgress) {
+            await onProgress({
+                current: turmaPayloads.length,
+                total: turmaPayloads.length,
+                message: 'Gerando arquivos CSV e salvando dados...'
+            });
+        }
         await saveData(extractionId, scrapedData);
         const { files, postgresRows } = await processData(scrapedData, `${year}.${semester}`, addLog);
         await saveProcessedFiles(extractionId, files);

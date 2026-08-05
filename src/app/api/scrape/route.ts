@@ -20,7 +20,11 @@ export async function POST(request: Request) {
         controller.enqueue(JSON.stringify({ extractionId: id }) + '\n');
       };
 
-      const result = await scrapeUFCData(formData, onLog, onIdCreated);
+      const onProgress = async (progress: { current: number; total: number; message: string }) => {
+        controller.enqueue(JSON.stringify({ progress }) + '\n');
+      };
+
+      const result = await scrapeUFCData(formData, onLog, onIdCreated, onProgress);
 
       controller.enqueue(JSON.stringify({ finalResult: result }) + '\n');
       
