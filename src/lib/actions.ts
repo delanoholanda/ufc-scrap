@@ -110,7 +110,6 @@ export async function scrapeUFCData(
             });
             const link = target?.querySelector('a');
             if (link) {
-                // Atribui um ID temporário se não tiver para facilitar o clique via page.click
                 if (!link.id) link.id = 'tmp_secretaria_link';
                 return `#${link.id}`;
             }
@@ -123,14 +122,13 @@ export async function scrapeUFCData(
                 page.waitForNavigation({ waitUntil: 'networkidle0' }),
                 page.click(linkSelector)
             ]);
-            await delay(2000); // Estabilização extra
+            await delay(2000);
         } else {
             throw new Error("Vínculo 'SECRETARIA' não encontrado.");
         }
 
         await addLog("Verificando telas de aviso intermediárias...");
         try {
-            // Pequeno delay para garantir que o contexto de navegação terminou
             await delay(1000);
             const hasMenu = await page.$('a[href*="verMenuGraduacao.do"]');
             if (!hasMenu) {
@@ -198,7 +196,10 @@ export async function scrapeUFCData(
             document.querySelectorAll('#lista-turmas > tbody > tr').forEach(row => {
                 if (row.classList.contains('destaque')) {
                     const match = row.textContent?.match(/(.*) - (.*)/);
-                    if (match) { currentCodigo = match[1].trim(); currentComp = match[2].trim(); }
+                    if (match) { 
+                        currentCodigo = match[1].trim(); 
+                        currentComp = match[2].trim(); 
+                    }
                 } else if (!row.id?.startsWith('trOpcoesTurma')) {
                     const menuImg = row.querySelector('img[title="Visualizar Menu"]');
                     if (menuImg) {
@@ -232,13 +233,14 @@ export async function scrapeUFCData(
                 return { success: false, cancelled: true };
             }
 
-            await addLog(`[${i+1}/${turmasInfo.length}] Turma: ${info.codigo}`);
+            const progressLog = `[${i+1}/${turmasInfo.length}] Turma: ${info.codigo} - ${info.componente} - ${info.turma}`;
+            await addLog(progressLog);
+
             await page.waitForSelector(`#exibir_${info.id}`, { timeout: 15000 });
             await page.click(`#exibir_${info.id}`);
             
-            // Aguarda a linha de opções aparecer e estar visível
             await page.waitForSelector(`#trOpcoesTurma${info.id}`, { visible: true, timeout: 10000 });
-            await delay(800);
+            await delay(500);
 
             const listarAlunosSelector = await page.evaluate((id) => {
                 const links = Array.from(document.querySelectorAll(`#trOpcoesTurma${id} a`));
@@ -251,43 +253,85 @@ export async function scrapeUFCData(
             }, info.id);
 
             if (listarAlunosSelector) {
-                await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                    page.click(listarAlunosSelector)
-                ]);
+                try {
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }),
+                        page.click(listarAlunosSelector)
+                    ]);
+                    
+                    // Verifica se a página de alunos abriu ou se há mensagem de erro/vazia
+                    const pageContent = await page.evaluate(() => {
+                        const table = document.querySelector('#lista-turmas-matriculas');
+                        const errorMsg = document.querySelector('.error, .errorNote, .messagem-erro')?.textContent?.trim();
+                        return { hasTable: !!table, error: errorMsg };
+                    });
+
+                    if (!pageContent.hasTable) {
+                        await addLog(`[AVISO] Turma ${info.codigo} sem alunos matriculados ou link inacessível.`);
+                        scrapedData.push({
+                            codigo: info.codigo,
+                            componente: info.componente,
+                            docente: info.docente,
+                            turma: info.turma,
+                            matricula: 'SEM ALUNO',
+                            nome: 'TURMA SEM ALUNOS',
+                            curso: 'N/A',
+                            tipoReserva: 'N/A',
+                            situacao: 'N/A'
+                        });
+                        // Volta se mudou de página
+                        const isMainList = await page.$('#lista-turmas');
+                        if (!isMainList) await page.goBack();
+                    } else {
+                        const students: ScrapedDataRow[] = await page.evaluate((turmaInfo) => {
+                            const rows = Array.from(document.querySelectorAll('#lista-turmas-matriculas tbody tr'));
+                            return rows.map(tr => {
+                                const tds = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
+                                return {
+                                    codigo: turmaInfo.codigo,
+                                    componente: turmaInfo.componente,
+                                    docente: turmaInfo.docente,
+                                    turma: turmaInfo.turma,
+                                    matricula: tds[0],
+                                    nome: tds[1],
+                                    curso: tds[2],
+                                    tipoReserva: tds[4] || 'NÃO INFORMADO',
+                                    situacao: tds[tds.length - 1]
+                                };
+                            });
+                        }, info);
+
+                        scrapedData.push(...students);
+                        await Promise.all([
+                            page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                            page.goBack()
+                        ]);
+                    }
+                } catch (e) {
+                    await addLog(`[AVISO] Falha ao acessar alunos de ${info.codigo}. Prosseguindo...`);
+                    // Garante que o robô tente voltar para a lista principal
+                    const isMainList = await page.$('#lista-turmas');
+                    if (!isMainList) {
+                         await page.goto('https://si3.ufc.br/sigaa/graduacao/turma/lista.do', { waitUntil: 'networkidle2' }).catch(() => {});
+                    }
+                }
             } else {
-                await addLog(`[AVISO] Sem alunos para ${info.codigo}.`);
-                continue;
+                await addLog(`[AVISO] Turma ${info.codigo} não possui opção 'Listar Alunos'.`);
+                scrapedData.push({
+                    codigo: info.codigo,
+                    componente: info.componente,
+                    docente: info.docente,
+                    turma: info.turma,
+                    matricula: 'SEM ALUNO',
+                    nome: 'TURMA SEM ALUNOS (LINK AUSENTE)',
+                    curso: 'N/A',
+                    tipoReserva: 'N/A',
+                    situacao: 'N/A'
+                });
             }
 
-            await page.waitForSelector('#lista-turmas-matriculas', { timeout: 20000 });
-            const students: ScrapedDataRow[] = await page.evaluate((turmaInfo) => {
-                const rows = Array.from(document.querySelectorAll('#lista-turmas-matriculas tbody tr'));
-                return rows.map(tr => {
-                    const tds = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
-                    return {
-                        codigo: turmaInfo.codigo,
-                        componente: turmaInfo.componente,
-                        docente: turmaInfo.docente,
-                        turma: turmaInfo.turma,
-                        matricula: tds[0],
-                        nome: tds[1],
-                        curso: tds[2],
-                        tipoReserva: tds[4] || 'NÃO INFORMADO',
-                        situacao: tds[tds.length - 1]
-                    };
-                });
-            }, info);
-
-            scrapedData.push(...students);
-            
-            // Retorna para a lista de turmas com segurança
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                page.goBack()
-            ]);
-            await page.waitForSelector('#lista-turmas', { timeout: 20000 });
-            await delay(500);
+            await page.waitForSelector('#lista-turmas', { timeout: 20000 }).catch(() => {});
+            await delay(300);
         }
 
         await addLog("Salvando e processando dados...");

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useRef } from 'react';
@@ -35,8 +36,7 @@ export default function LogViewer({ logs, title = "Logs" }: LogViewerProps) {
         <ScrollArea className="h-72 w-full rounded-md bg-muted p-4 font-mono text-sm" ref={scrollAreaRef}>
           {logs.length > 0 ? (
             logs.map((log, index) => (
-              <div key={index} className="whitespace-pre-wrap">
-                <span className="text-muted-foreground mr-2">{`[${new Date().toLocaleTimeString()}]`}</span>
+              <div key={index} className="whitespace-pre-wrap mb-1">
                 <span>{log}</span>
               </div>
             ))

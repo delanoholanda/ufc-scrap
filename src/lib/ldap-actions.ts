@@ -22,9 +22,9 @@ function normalizeString(str: string): string {
     return str
         .toUpperCase()
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-        .replace(/-/g, ' ')              // Hífens viram espaços
-        .replace(/\s+/g, ' ')            // Remove espaços duplos
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/-/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 }
 
@@ -133,7 +133,6 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
       });
     });
 
-    // Sincronização Automática CN e SN (Primeiro Nome / Restante)
     const updateData: any = { ...attributes };
     if (updateData.nomecompleto) {
         const cleanName = normalizeString(updateData.nomecompleto);
@@ -152,7 +151,6 @@ export async function updateLdapUser(dn: string, attributes: Partial<LdapUser>) 
 
     if (validEntries.length === 0) return { success: true };
 
-    // Formato de Change validado pelo usuário que funcionou para resolver o erro de Atributo
     const changes: Change[] = validEntries.map(([key, value]) => {
       return new Change({
         operation: 'replace',

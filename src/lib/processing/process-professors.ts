@@ -115,8 +115,7 @@ export async function processProfessors(data: any[], logger: (m: string) => Prom
                 lastname: nameParts.slice(1).join(' '),
                 email: 'zz',
                 role1: 'editingteacher',
-                course1: p['Curso ShortName'],
-                siape: p.Siape
+                course1: p['Curso ShortName']
             };
         });
         

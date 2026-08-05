@@ -39,12 +39,17 @@ export async function processData(
 
     const processedInput = scrapedData.map(row => {
         const courseName = (row.curso || '').split(' -')[0].trim();
+        
+        // Limpa o nome do componente removendo sufixos como (GRADUAÇÃO), (PÓS-GRADUAÇÃO) etc.
+        const componenteClean = (row.componente || '').replace(/\s*\(.*\)\s*$/, '').trim();
+        
         const turmaClean = (row.turma || '').replace('Turma ', '').trim();
-        const courseShortName = `${row.codigo} - ${row.componente} - ${turmaClean} - ${category}`;
+        const courseShortName = `${row.codigo} - ${componenteClean} - ${turmaClean} - ${category}`;
         
         return {
             ...row,
             curso: courseName,
+            componente: componenteClean,
             'Curso ShortName': courseShortName,
             nome: (row.nome || '').split('\n')[0].replace('\r', '').trim(),
             matricula: String(row.matricula || '').trim()
@@ -91,7 +96,7 @@ export async function processData(
         },
         { 
             filename: `Professores-${category}.csv`, 
-            content: toCSV(finalProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}, {key: 'siape', label: 'siape'}]) 
+            content: toCSV(finalProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}]) 
         },
         { 
             filename: `Professores-NãoEncontrados-${category}.csv`, 

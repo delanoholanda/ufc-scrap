@@ -9,11 +9,6 @@ const fallbackSecret = 'chave-temporaria-de-seguranca-para-ambiente-de-build';
 const key = new TextEncoder().encode(secretKey || fallbackSecret);
 
 export async function encrypt(payload: any) {
-  // Aviso apenas no servidor para não expor em logs de cliente se for o caso
-  if (process.env.NODE_ENV === 'production' && !secretKey && typeof window === 'undefined') {
-    console.warn('[WARNING] SESSION_SECRET não definida. Usando chave de fallback para o build.');
-  }
-
   return await new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
