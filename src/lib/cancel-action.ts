@@ -2,23 +2,28 @@
 
 import { getDB } from './database';
 
-export async function cancelExtraction(id: number): Promise<{ success: boolean; error?: string }> {
+export async function cancelExtraction(id?: number | null): Promise<{ success: boolean; error?: string }> {
   try {
     const db = getDB();
-    const stmt = db.prepare("UPDATE extractions SET status = 'cancelled' WHERE id = ? AND status = 'running'");
-    const result = stmt.run(id);
+    let result;
+    if (id) {
+      const stmt = db.prepare("UPDATE extractions SET status = 'cancelled' WHERE id = ? AND status = 'running'");
+      result = stmt.run(id);
+    } else {
+      const stmt = db.prepare("UPDATE extractions SET status = 'cancelled' WHERE status = 'running'");
+      result = stmt.run();
+    }
 
     if (result.changes === 0) {
-      // It might have already completed or been cancelled, which is not an error for the user.
-      console.warn(`[CANCEL_ACTION] Tentativa de cancelar a extração ${id}, mas ela não estava em estado 'running'.`);
-      return { success: true }; // Still a success from the user's perspective
+      console.warn(`[CANCEL_ACTION] Nenhuma extração em estado 'running' para cancelar.`);
+      return { success: true };
     }
     
-    console.log(`[CANCEL_ACTION] Extração ${id} marcada como 'cancelled'.`);
+    console.log(`[CANCEL_ACTION] Extração marcada como 'cancelled' (${result.changes} alterada(s)).`);
     return { success: true };
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Falha ao cancelar a extração.';
-    console.error(`[CANCEL_ACTION_ERROR] Erro ao cancelar a extração ${id}:`, error);
+    console.error(`[CANCEL_ACTION_ERROR] Erro ao cancelar a extração:`, error);
     return { success: false, error };
   }
 }

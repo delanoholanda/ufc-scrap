@@ -76,6 +76,19 @@ export async function scrapeUFCData(
     await onIdCreated(extractionId);
 
     let browser: Browser | undefined;
+
+    const checkCancelled = async () => {
+        const currentStatus = (getDB().prepare('SELECT status FROM extractions WHERE id = ?').get(extractionId) as any)?.status;
+        if (currentStatus === 'cancelled') {
+            await addLog("Operação cancelada pelo usuário. Encerrando o navegador...");
+            if (browser) {
+                await browser.close().catch(() => {});
+                browser = undefined;
+            }
+            throw new Error("CANCELLED_BY_USER");
+        }
+    };
+
     try {
         const isProduction = !!process.env.FIREBASE_APP_HOSTING_URL || process.env.NODE_ENV === 'production';
         browser = await puppeteer.launch({
@@ -86,6 +99,7 @@ export async function scrapeUFCData(
         const page = await browser.newPage();
         await page.setViewport({ width: 1280, height: 800 });
 
+        await checkCancelled();
         await addLog("Navegando para o portal de login...");
         await page.goto('https://si3.ufc.br/sigaa/verTelaLogin.do', { waitUntil: 'networkidle2' });
         
@@ -93,12 +107,14 @@ export async function scrapeUFCData(
         await page.type('input[name="user.login"]', username);
         await page.type('input[name="user.senha"]', password);
         
+        await checkCancelled();
         await addLog("Realizando login...");
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle2' }),
             page.click('input[type="submit"]')
         ]);
 
+        await checkCancelled();
         await addLog("Aguardando lista de vínculos...");
         await page.waitForSelector(".listagem", { timeout: 30000 });
         
@@ -118,6 +134,7 @@ export async function scrapeUFCData(
         });
 
         if (linkSelector) {
+            await checkCancelled();
             await addLog("Vínculo encontrado. Acessando...");
             await Promise.all([
                 page.waitForNavigation({ waitUntil: 'networkidle0' }),
@@ -128,6 +145,7 @@ export async function scrapeUFCData(
             throw new Error("Vínculo 'SECRETARIA' não encontrado.");
         }
 
+        await checkCancelled();
         await addLog("Verificando telas de aviso intermediárias...");
         try {
             await delay(1000);
@@ -147,15 +165,18 @@ export async function scrapeUFCData(
             await addLog("Navegação prosseguindo...");
         }
         
+        await checkCancelled();
         await addLog("Aguardando Menu de Graduação...");
         await page.waitForSelector('a[href*="verMenuGraduacao.do"]', { timeout: 30000 });
 
+        await checkCancelled();
         await addLog("Acessando Menu de Graduação...");
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle0' }),
             page.click('a[href*="verMenuGraduacao.do"]')
         ]);
 
+        await checkCancelled();
         await addLog("Acessando 'Consultar Turma'...");
         const consultaSelector = await page.evaluate(() => {
             const links = Array.from(document.querySelectorAll('a'));
@@ -168,6 +189,7 @@ export async function scrapeUFCData(
         });
 
         if (consultaSelector) {
+            await checkCancelled();
             await Promise.all([
                 page.waitForNavigation({ waitUntil: 'networkidle0' }),
                 page.click(consultaSelector)
@@ -176,6 +198,7 @@ export async function scrapeUFCData(
              throw new Error("Link 'Consultar Turma' não encontrado.");
         }
 
+        await checkCancelled();
         await addLog("Configurando filtros...");
         await page.waitForSelector('table.formulario', { timeout: 20000 });
         await page.evaluate(() => {
@@ -184,12 +207,14 @@ export async function scrapeUFCData(
         });
         await page.select('select[name="form:selectUnidade"]', '1020');
         
+        await checkCancelled();
         await addLog("Buscando turmas...");
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle0' }),
             page.click('input[name="form:buttonBuscar"]')
         ]);
 
+        await checkCancelled();
         await page.waitForSelector('#lista-turmas', { timeout: 30000 });
         await addLog("Mapeando turmas encontradas na página...");
 
@@ -264,7 +289,11 @@ export async function scrapeUFCData(
             // Verifica se o usuário solicitou cancelamento
             const currentStatus = (getDB().prepare('SELECT status FROM extractions WHERE id = ?').get(extractionId) as any)?.status;
             if (currentStatus === 'cancelled') {
-                await addLog("Operação cancelada pelo usuário.");
+                await addLog("Operação cancelada pelo usuário. Encerrando o navegador imediatamente...");
+                if (browser) {
+                    await browser.close().catch(() => {});
+                    browser = undefined;
+                }
                 return { success: false, cancelled: true };
             }
 
@@ -385,13 +414,16 @@ export async function scrapeUFCData(
         return { success: true, data: scrapedData };
 
     } catch (e: any) {
+        if (e.message === "CANCELLED_BY_USER") {
+            return { success: false, cancelled: true };
+        }
         await addError(`Erro crítico: ${e.message}`);
         await updateExtractionStatus(extractionId, 'failed');
         return { success: false, error: e.message };
     } finally {
         if (browser) {
             await addLog("Fechando navegador...");
-            await browser.close();
+            await browser.close().catch(() => {});
         }
     }
 }

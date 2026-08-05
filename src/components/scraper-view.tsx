@@ -31,8 +31,8 @@ export default function ScraperView() {
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [semester, setSemester] = useState<string>("1");
   const [currentExtractionId, setCurrentExtractionId] = useState<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const router = useRouter();
-
 
   useEffect(() => {
     const storedUser = localStorage.getItem('sigaa_username') || '';
@@ -42,20 +42,31 @@ export default function ScraperView() {
     setIsLoaded(true);
   }, []);
 
-  const handleCancel = async () => {
-    if (currentExtractionId === null) {
-      toast({ variant: 'destructive', title: 'Erro', description: 'Não há extração em andamento para cancelar.'});
-      return;
+  const handleCancel = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
-    setIsCancelling(true);
-    setLogs(prev => [...prev, '[AVISO] Solicitação de cancelamento enviada. Aguardando o término do ciclo atual...']);
-    const result = await cancelExtraction(currentExtractionId);
-    if (!result.success) {
-      toast({ variant: 'destructive', title: 'Erro ao Cancelar', description: result.error });
-      setIsCancelling(false); // Allow user to try again
-    } else {
-       toast({ title: 'Cancelamento Solicitado', description: 'O processo será interrompido em breve.'});
+
+    // 1. Notifica o banco de dados sobre o cancelamento
+    cancelExtraction(currentExtractionId).catch(() => {});
+
+    // 2. Interrompe imediatamente o stream HTTP
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
+
+    // 3. Reseta a interface instantaneamente sem esperar o ciclo
+    setLoading(false);
+    setIsCancelling(false);
+    setProgress(null);
+    setError("Extração cancelada pelo usuário.");
+    setLogs(prev => [...prev, '[AVISO] Extração interrompida pelo usuário.']);
+    toast({
+      title: 'Extração Cancelada',
+      description: 'O processo foi interrompido com sucesso.',
+    });
   };
 
   const handleScrapeSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -84,10 +95,14 @@ export default function ScraperView() {
         throw new Error("Credenciais do SIGAA não configuradas. Por favor, configure suas credenciais no menu de configurações para prosseguir com a ação.");
       }
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       // Use a ReadableStream to get logs in real-time
       const response = await fetch('/api/scrape', {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
 
       if (!response.body) {
@@ -151,6 +166,10 @@ export default function ScraperView() {
 
 
     } catch (e: any) {
+        if (e.name === 'AbortError') {
+          // Abortado intencionalmente pelo botão de cancelamento
+          return;
+        }
         let errorMessage = e.message || 'An unknown error occurred.';
         setError(errorMessage);
         setLogs(prev => [...prev, `[ERRO FATAL] ${errorMessage}`]);
@@ -163,6 +182,7 @@ export default function ScraperView() {
       setLoading(false);
       setIsCancelling(false);
       setCurrentExtractionId(null);
+      abortControllerRef.current = null;
     }
   };
 
@@ -204,14 +224,14 @@ export default function ScraperView() {
                     {isLoaded ? "Iniciar" : "Carregando..."}
                  </Button>
               ) : (
-                 <Button type="button" variant="destructive" className="w-full sm:w-auto" onClick={handleCancel} disabled={isCancelling}>
+                  <Button type="button" variant="destructive" className="w-full sm:w-auto" onClick={(e) => handleCancel(e)} disabled={isCancelling}>
                     {isCancelling ? (
                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                       <XCircle className="mr-2 h-4 w-4" />
                     )}
                     {isCancelling ? "Cancelando..." : "Cancelar"}
-                 </Button>
+                  </Button>
               )}
 
             </div>
