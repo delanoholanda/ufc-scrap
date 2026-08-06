@@ -47,6 +47,7 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
       matricula: '',
       curso: '',
       cargo: '',
+      siape: '',
       userPassword: '',
   });
   
@@ -66,6 +67,7 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
                     matricula: result.user.matricula || '',
                     curso: result.user.curso || '',
                     cargo: result.user.cargo || '',
+                    siape: result.user.siape || '',
                     userPassword: '', 
                 });
             } else {
@@ -140,7 +142,10 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
     }
 
     // Campos específicos de Servidor
-    if (!!original.siape || !!original.cargo) {
+    if (isServidor || !!original.siape || !!original.cargo) {
+        if (formData.siape !== (original.siape || '')) {
+            dataToUpdate.siape = formData.siape;
+        }
         if (formData.cargo !== (original.cargo || '')) {
             dataToUpdate.cargo = formData.cargo;
         }
@@ -166,7 +171,7 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
   };
 
   const isAluno = !!user?.matricula;
-  const isServidor = !!user?.siape || (!user?.matricula && !!user?.cargo);
+  const isServidor = !!user?.siape || (!user?.matricula && !!user?.cargo) || !isAluno;
 
   const renderLoading = () => (
     <div className="space-y-4 pt-4">
@@ -240,10 +245,16 @@ export default function LdapUserDialog({ isOpen, onOpenChange, onUserSaved, user
                 )}
 
                 {isServidor && (
+                    <>
+                    <div className="space-y-2">
+                        <Label htmlFor="siape">SIAPE</Label>
+                        <Input id="siape" name="siape" value={formData.siape} onChange={handleChange} placeholder="Número do SIAPE" />
+                    </div>
                     <div className="space-y-2">
                         <Label htmlFor="cargo">Cargo</Label>
-                        <Input id="cargo" name="cargo" value={formData.cargo} onChange={handleChange} />
+                        <Input id="cargo" name="cargo" value={formData.cargo} onChange={handleChange} placeholder="Cargo ou Função" />
                     </div>
+                    </>
                 )}
 
                 <div className="space-y-2">
