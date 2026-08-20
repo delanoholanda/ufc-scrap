@@ -2,7 +2,7 @@
 'use server';
 import type { ScrapedDataRow, CSVFile } from '@/lib/types';
 import puppeteer, { Browser, Page } from 'puppeteer';
-import { getDB } from './database';
+import { getDB, fetchLatestSuccessfulExtraction } from './database';
 import { processData } from './processing/process-data';
 import { checkAuth } from './auth-actions';
 import { syncStudentsToPostgres } from './matriculas-actions';
@@ -50,7 +50,7 @@ export async function scrapeUFCData(
     onLog: (log: string) => Promise<void>,
     onIdCreated: (id: number) => Promise<void>,
     onProgress?: (progress: { current: number; total: number; message: string }) => Promise<void>
-): Promise<{ success: boolean; data?: ScrapedDataRow[]; error?: string, cancelled?: boolean }> {
+): Promise<{ success: boolean; data?: ScrapedDataRow[]; error?: string; cancelled?: boolean; noChanges?: boolean }> {
     const userId = await checkAuth();
     if (!userId) return { success: false, error: "Acesso negado. Sessão expirada." };
 
@@ -394,6 +394,12 @@ export async function scrapeUFCData(
             }
         }
 
+        await addLog("Verificando se existem buscas anteriores para este período...");
+        const { extraction: prevExtraction, data: prevData } = fetchLatestSuccessfulExtraction(year, semester);
+        if (prevExtraction && prevData) {
+            await addLog(`[INCREMENTAL] Busca anterior encontrada (ID: ${prevExtraction.id}). Comparando alterações...`);
+        }
+
         await addLog("Salvando e processando dados...");
         if (onProgress) {
             await onProgress({
@@ -403,7 +409,7 @@ export async function scrapeUFCData(
             });
         }
         await saveData(extractionId, scrapedData);
-        const { files, postgresRows } = await processData(scrapedData, `${year}.${semester}`, addLog);
+        const { files, postgresRows, noChanges } = await processData(scrapedData, `${year}.${semester}`, addLog, prevData);
         await saveProcessedFiles(extractionId, files);
 
         if (postgresRows && postgresRows.length > 0) {
@@ -411,7 +417,7 @@ export async function scrapeUFCData(
         }
         
         await updateExtractionStatus(extractionId, 'completed');
-        return { success: true, data: scrapedData };
+        return { success: true, data: scrapedData, noChanges };
 
     } catch (e: any) {
         if (e.message === "CANCELLED_BY_USER") {

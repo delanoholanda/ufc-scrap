@@ -31,11 +31,31 @@ function uniteData(students: any[], professors: any[]): any[] {
 export async function processData(
   scrapedData: ScrapedDataRow[],
   category: string,
-  onLog?: (msg: string) => Promise<void>
-): Promise<{ files: CSVFile[], postgresRows: any[] }> {
+  onLog?: (msg: string) => Promise<void>,
+  previousData?: ScrapedDataRow[] | null
+): Promise<{ files: CSVFile[], postgresRows: any[], noChanges?: boolean }> {
     const logger = onLog || (async (m: string) => console.log(m));
     
     await logger(`[PROCESS] Iniciando limpeza de ${scrapedData.length} registros...`);
+
+    let isIncremental = false;
+    let newOrChangedRows: ScrapedDataRow[] = scrapedData;
+
+    if (previousData && previousData.length > 0) {
+        isIncremental = true;
+        const prevSet = new Set(
+            previousData.map(r => `${(r.codigo || '').trim()}|${(r.componente || '').trim()}|${(r.turma || '').trim()}|${(r.matricula || '').trim()}|${(r.docente || '').trim()}`)
+        );
+        newOrChangedRows = scrapedData.filter(
+            r => !prevSet.has(`${(r.codigo || '').trim()}|${(r.componente || '').trim()}|${(r.turma || '').trim()}|${(r.matricula || '').trim()}|${(r.docente || '').trim()}`)
+        );
+
+        if (newOrChangedRows.length === 0) {
+            await logger(`[INCREMENTAL] Nenhuma alteração encontrada em relação à extração anterior do período ${category}.`);
+        } else {
+            await logger(`[INCREMENTAL] Encontrados ${newOrChangedRows.length} novos registros em relação à busca anterior do período ${category}.`);
+        }
+    }
 
     const processedInput = scrapedData.map(row => {
         const courseName = (row.curso || '').split(' -')[0].trim();
@@ -108,5 +128,51 @@ export async function processData(
         },
     ];
 
-    return { files, postgresRows: postgresStudents };
+    if (isIncremental && newOrChangedRows.length > 0) {
+        const incrementalProcessedInput = newOrChangedRows.map(row => {
+            const courseName = (row.curso || '').split(' -')[0].trim();
+            const componenteClean = (row.componente || '').replace(/\s*\(.*\)\s*$/, '').trim();
+            const turmaClean = (row.turma || '').replace('Turma ', '').trim();
+            const courseShortName = `${row.codigo} - ${componenteClean} - ${turmaClean} - ${category}`;
+            
+            return {
+                ...row,
+                curso: courseName,
+                componente: componenteClean,
+                'Curso ShortName': courseShortName,
+                nome: (row.nome || '').split('\n')[0].replace('\r', '').trim(),
+                matricula: String(row.matricula || '').trim()
+            };
+        });
+
+        const { finalStudents: incStudents } = await processStudents(incrementalProcessedInput, async () => {});
+        const { finalProfessors: incProfessors } = await processProfessors(incrementalProcessedInput, async () => {});
+        const incClassData = processClasses(incrementalProcessedInput, category);
+        const incAllUsers = uniteData(incStudents, incProfessors);
+
+        files.push(
+            {
+                filename: `Turmas-Novas-${category}.csv`,
+                content: toCSV(incClassData, [{key: 'shortname', label: 'shortname'}, {key: 'fullname', label: 'fullname'}, {key: 'category_idnumber', label: 'category_idnumber'}])
+            },
+            {
+                filename: `Alunos-Novos-${category}.csv`,
+                content: toCSV(incStudents, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            },
+            {
+                filename: `Professores-Novos-${category}.csv`,
+                content: toCSV(incProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            },
+            {
+                filename: `Usuarios-Novos-${category}.csv`,
+                content: toCSV(incAllUsers, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            }
+        );
+    }
+
+    return { 
+        files, 
+        postgresRows: postgresStudents, 
+        noChanges: isIncremental && newOrChangedRows.length === 0 
+    };
 }
