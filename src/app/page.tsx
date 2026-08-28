@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import Dashboard from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
-import AuthPage from "./auth/page";
+import AuthPage from "@/components/auth-page";
 import { checkAuth } from "@/lib/auth-actions";
 
 export default function Home() {

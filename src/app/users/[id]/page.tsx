@@ -30,7 +30,7 @@ export default function EditUserPage() {
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
-  const userId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const userId = params?.id ? (Array.isArray(params.id) ? params.id[0] : params.id) : undefined;
 
   useEffect(() => {
     const sessionUserId = sessionStorage.getItem("userId");
@@ -46,8 +46,10 @@ export default function EditUserPage() {
     }
 
     async function fetchUser() {
+      if (!userId) return;
       try {
         const userData = await findUserById(parseInt(userId, 10));
+
         if (userData) {
           setUser(userData);
           setName(userData.name);

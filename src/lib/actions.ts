@@ -395,8 +395,8 @@ export async function scrapeUFCData(
         }
 
         await addLog("Verificando se existem buscas anteriores para este período...");
-        const { extraction: prevExtraction, data: prevData } = fetchLatestSuccessfulExtraction(year, semester);
-        if (prevExtraction && prevData) {
+        const { extraction: prevExtraction, data: prevData, files: prevFiles } = fetchLatestSuccessfulExtraction(year, semester);
+        if (prevExtraction) {
             await addLog(`[INCREMENTAL] Busca anterior encontrada (ID: ${prevExtraction.id}). Comparando alterações...`);
         }
 
@@ -409,7 +409,8 @@ export async function scrapeUFCData(
             });
         }
         await saveData(extractionId, scrapedData);
-        const { files, postgresRows, noChanges } = await processData(scrapedData, `${year}.${semester}`, addLog, prevData);
+        const { files, postgresRows, noChanges } = await processData(scrapedData, `${year}.${semester}`, addLog, prevData, prevFiles);
+
         await saveProcessedFiles(extractionId, files);
 
         if (postgresRows && postgresRows.length > 0) {

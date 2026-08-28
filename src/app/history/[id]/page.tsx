@@ -21,7 +21,8 @@ export default function HistoryDetailsPage() {
   const { toast } = useToast();
 
   const params = useParams();
-  const extractionId = parseInt(Array.isArray(params.id) ? params.id[0] : params.id, 10);
+  const rawId = params?.id ? (Array.isArray(params.id) ? params.id[0] : params.id) : '';
+  const extractionId = parseInt(rawId, 10);
 
   useEffect(() => {
     const sessionUserId = sessionStorage.getItem("userId");

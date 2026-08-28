@@ -239,7 +239,7 @@ export default function ScraperView() {
         </CardContent>
       </Card>
       
-      {loading && !showLogs && (
+      {loading && (
         <Card className="border-primary/20 bg-card p-6 shadow-sm">
           <div className="space-y-4">
             <div className="flex items-center justify-between">

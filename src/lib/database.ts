@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import type { User, ExtractionStatus, Extraction, ScrapedDataRow, PostgresMatricula } from './types';
+import type { User, ExtractionStatus, Extraction, ScrapedDataRow, PostgresMatricula, CSVFile } from './types';
 
 const DB_FILE_NAME = 'ufcScraper.db';
 const dataDirectory = path.join(process.cwd(), 'data');
@@ -189,27 +189,41 @@ export function saveLog(extractionId: number, logMessage: string): void {
   }
 }
 
-export function fetchLatestSuccessfulExtraction(year: string, semester: string): { extraction: Extraction | null, data: ScrapedDataRow[] | null } {
+export function fetchLatestSuccessfulExtraction(
+    year: string, 
+    semester: string, 
+    beforeExtractionId?: number
+): { extraction: Extraction | null, data: ScrapedDataRow[] | null, files: CSVFile[] | null } {
     const db = getDB();
     try {
-        const stmt = db.prepare(
-            `SELECT id, year, semester, status, createdAt FROM extractions 
-             WHERE year = ? AND semester = ? AND status = 'completed' 
-             ORDER BY createdAt DESC LIMIT 1`
-        );
-        const extraction = stmt.get(year, semester) as Extraction | undefined;
+        let query = `SELECT id, year, semester, status, createdAt FROM extractions 
+                     WHERE year = ? AND semester = ? AND status = 'completed'`;
+        const params: any[] = [year, semester];
+
+        if (beforeExtractionId) {
+            query += ` AND id < ?`;
+            params.push(beforeExtractionId);
+        }
+
+        query += ` ORDER BY createdAt DESC, id DESC LIMIT 1`;
+
+        const stmt = db.prepare(query);
+        const extraction = stmt.get(...params) as Extraction | undefined;
 
         if (!extraction) {
-            return { extraction: null, data: null };
+            return { extraction: null, data: null, files: null };
         }
         
         const dataStmt = db.prepare('SELECT * FROM scraped_data WHERE extraction_id = ?');
         const data = dataStmt.all(extraction.id) as ScrapedDataRow[];
         
-        return { extraction, data };
+        const filesStmt = db.prepare('SELECT filename, content FROM processed_files WHERE extraction_id = ?');
+        const files = filesStmt.all(extraction.id) as CSVFile[];
+
+        return { extraction, data, files };
     } catch (e) {
         console.error("Error fetching latest successful extraction:", e);
-        return { extraction: null, data: null };
+        return { extraction: null, data: null, files: null };
     }
 }
 

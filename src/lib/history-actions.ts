@@ -1,6 +1,6 @@
 'use server';
 
-import { getDB } from './database';
+import { getDB, fetchLatestSuccessfulExtraction } from './database';
 import type { Extraction, ScrapedDataRow, CSVFile, ExtractionLog } from './types';
 import { processData } from './processing/process-data';
 
@@ -142,7 +142,8 @@ export async function reprocessExtraction(id: number): Promise<{ success: boolea
         // 2. Executar a lógica de processamento
         console.log(`[REPROCESS] Executando 'processData'...`);
         const category = `${extractionInfo.year}.${extractionInfo.semester}`;
-        const newFiles = await processData(rawData, category);
+        const { data: prevData, files: prevFiles } = fetchLatestSuccessfulExtraction(String(extractionInfo.year), String(extractionInfo.semester), id);
+        const { files: newFiles } = await processData(rawData, category, async (m) => console.log(m), prevData, prevFiles);
         console.log(`[REPROCESS] 'processData' concluído. Gerados ${newFiles.length} arquivos.`);
 
         // 3. Atualizar arquivos no banco de dados em uma transação

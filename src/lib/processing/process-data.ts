@@ -32,28 +32,64 @@ export async function processData(
   scrapedData: ScrapedDataRow[],
   category: string,
   onLog?: (msg: string) => Promise<void>,
-  previousData?: ScrapedDataRow[] | null
+  previousData?: ScrapedDataRow[] | null,
+  previousFiles?: CSVFile[] | null
 ): Promise<{ files: CSVFile[], postgresRows: any[], noChanges?: boolean }> {
     const logger = onLog || (async (m: string) => console.log(m));
     
     await logger(`[PROCESS] Iniciando limpeza de ${scrapedData.length} registros...`);
 
-    let isIncremental = false;
-    let newOrChangedRows: ScrapedDataRow[] = scrapedData;
+    const isIncremental = Boolean((previousFiles && previousFiles.length > 0) || (previousData && previousData.length > 0));
 
-    if (previousData && previousData.length > 0) {
-        isIncremental = true;
-        const prevSet = new Set(
-            previousData.map(r => `${(r.codigo || '').trim()}|${(r.componente || '').trim()}|${(r.turma || '').trim()}|${(r.matricula || '').trim()}|${(r.docente || '').trim()}`)
-        );
-        newOrChangedRows = scrapedData.filter(
-            r => !prevSet.has(`${(r.codigo || '').trim()}|${(r.componente || '').trim()}|${(r.turma || '').trim()}|${(r.matricula || '').trim()}|${(r.docente || '').trim()}`)
-        );
+    const prevStudentMap = new Map<string, any>();
+    const prevProfessorMap = new Map<string, any>();
+    const prevClasses = new Set<string>();
 
-        if (newOrChangedRows.length === 0) {
-            await logger(`[INCREMENTAL] Nenhuma alteração encontrada em relação à extração anterior do período ${category}.`);
-        } else {
-            await logger(`[INCREMENTAL] Encontrados ${newOrChangedRows.length} novos registros em relação à busca anterior do período ${category}.`);
+    if (isIncremental) {
+        if (previousFiles && previousFiles.length > 0) {
+            const prevStudentsFile = previousFiles.find(f => f.filename === `Alunos-${category}.csv`);
+            if (prevStudentsFile) {
+                const parsed = Papa.parse<any>(prevStudentsFile.content, { header: true, delimiter: ';', skipEmptyLines: true });
+                parsed.data.forEach(r => {
+                    const u = (r.username || '').trim();
+                    const c = (r.course1 || '').trim();
+                    if (u && c) {
+                        prevStudentMap.set(`${u}|${c}`, { ...r, username: u, course1: c });
+                    }
+                });
+            }
+
+            const prevProfessorsFile = previousFiles.find(f => f.filename === `Professores-${category}.csv`);
+            if (prevProfessorsFile) {
+                const parsed = Papa.parse<any>(prevProfessorsFile.content, { header: true, delimiter: ';', skipEmptyLines: true });
+                parsed.data.forEach(r => {
+                    const u = (r.username || '').trim();
+                    const c = (r.course1 || '').trim();
+                    if (u && c) {
+                        prevProfessorMap.set(`${u}|${c}`, { ...r, username: u, course1: c });
+                    }
+                });
+            }
+
+            const prevTurmasFile = previousFiles.find(f => f.filename === `Turmas-${category}.csv`);
+            if (prevTurmasFile) {
+                const parsed = Papa.parse<{ shortname?: string }>(prevTurmasFile.content, { header: true, delimiter: ';', skipEmptyLines: true });
+                parsed.data.forEach(r => {
+                    const s = (r.shortname || '').trim();
+                    if (s) prevClasses.add(s);
+                });
+            }
+        }
+
+        // Fallback: se não houver CSVs salvos na consulta anterior, mas houver previousData
+        if (prevClasses.size === 0 && previousData && previousData.length > 0) {
+            previousData.forEach(r => {
+                const courseName = (r.curso || '').split(' -')[0].trim();
+                const componenteClean = (r.componente || '').replace(/\s*\(.*\)\s*$/, '').trim();
+                const turmaClean = (r.turma || '').replace('Turma ', '').trim();
+                const courseShortName = `${r.codigo} - ${componenteClean} - ${turmaClean} - ${category}`;
+                prevClasses.add(courseShortName);
+            });
         }
     }
 
@@ -128,27 +164,57 @@ export async function processData(
         },
     ];
 
-    if (isIncremental && newOrChangedRows.length > 0) {
-        const incrementalProcessedInput = newOrChangedRows.map(row => {
-            const courseName = (row.curso || '').split(' -')[0].trim();
-            const componenteClean = (row.componente || '').replace(/\s*\(.*\)\s*$/, '').trim();
-            const turmaClean = (row.turma || '').replace('Turma ', '').trim();
-            const courseShortName = `${row.codigo} - ${componenteClean} - ${turmaClean} - ${category}`;
-            
-            return {
-                ...row,
-                curso: courseName,
-                componente: componenteClean,
-                'Curso ShortName': courseShortName,
-                nome: (row.nome || '').split('\n')[0].replace('\r', '').trim(),
-                matricula: String(row.matricula || '').trim()
-            };
+    let incStudents: any[] = [];
+    let incProfessors: any[] = [];
+    let incClassData: any[] = [];
+    let incAllUsers: any[] = [];
+
+    let remStudents: any[] = [];
+    let remProfessors: any[] = [];
+    let remAllUsers: any[] = [];
+
+    if (isIncremental) {
+        const currentStudentKeys = new Set<string>();
+        finalStudents.forEach(s => {
+            const key = `${(s.username || '').trim()}|${(s.course1 || '').trim()}`;
+            currentStudentKeys.add(key);
+            if (!prevStudentMap.has(key)) {
+                incStudents.push(s);
+            }
         });
 
-        const { finalStudents: incStudents } = await processStudents(incrementalProcessedInput, async () => {});
-        const { finalProfessors: incProfessors } = await processProfessors(incrementalProcessedInput, async () => {});
-        const incClassData = processClasses(incrementalProcessedInput, category);
-        const incAllUsers = uniteData(incStudents, incProfessors);
+        const currentProfessorKeys = new Set<string>();
+        finalProfessors.forEach(p => {
+            const key = `${(p.username || '').trim()}|${(p.course1 || '').trim()}`;
+            currentProfessorKeys.add(key);
+            if (!prevProfessorMap.has(key)) {
+                incProfessors.push(p);
+            }
+        });
+
+        incClassData = classData.filter(c => {
+            const key = (c.shortname || '').trim();
+            return !prevClasses.has(key);
+        });
+
+        incAllUsers = uniteData(incStudents, incProfessors);
+
+        // Desmatrículas / Remoções (role1 = 'none')
+        prevStudentMap.forEach((studentObj, key) => {
+            if (!currentStudentKeys.has(key)) {
+                remStudents.push({ ...studentObj, role1: 'none' });
+            }
+        });
+
+        prevProfessorMap.forEach((profObj, key) => {
+            if (!currentProfessorKeys.has(key)) {
+                remProfessors.push({ ...profObj, role1: 'none' });
+            }
+        });
+
+        remAllUsers = uniteData(remStudents, remProfessors);
+
+        await logger(`[INCREMENTAL] Comparativo com busca anterior: ${incStudents.length} novos alunos (+${remStudents.length} removidos), ${incProfessors.length} novos professores (+${remProfessors.length} removidos), ${incClassData.length} novas turmas.`);
 
         files.push(
             {
@@ -160,19 +226,35 @@ export async function processData(
                 content: toCSV(incStudents, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
             },
             {
+                filename: `Alunos-Removidos-${category}.csv`,
+                content: toCSV(remStudents, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            },
+            {
                 filename: `Professores-Novos-${category}.csv`,
                 content: toCSV(incProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
             },
             {
+                filename: `Professores-Removidos-${category}.csv`,
+                content: toCSV(remProfessors, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            },
+            {
                 filename: `Usuarios-Novos-${category}.csv`,
                 content: toCSV(incAllUsers, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
+            },
+            {
+                filename: `Usuarios-Removidos-${category}.csv`,
+                content: toCSV(remAllUsers, [{key: 'username', label: 'username'}, {key: 'firstname', label: 'firstname'}, {key: 'lastname', label: 'lastname'}, {key: 'email', label: 'email'}, {key: 'role1', label: 'role1'}, {key: 'course1', label: 'course1'}])
             }
         );
     }
 
+    const noChanges = isIncremental && incStudents.length === 0 && incProfessors.length === 0 && incClassData.length === 0 && remStudents.length === 0 && remProfessors.length === 0;
+
+
     return { 
         files, 
         postgresRows: postgresStudents, 
-        noChanges: isIncremental && newOrChangedRows.length === 0 
+        noChanges
     };
 }
+
